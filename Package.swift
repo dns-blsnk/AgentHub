@@ -9,6 +9,11 @@ let package = Package(
             name: "AgentHubCore",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        .executableTarget(
+            name: "AgentHub",
+            dependencies: ["AgentHubCore"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         .testTarget(
             name: "AgentHubCoreTests",
             dependencies: ["AgentHubCore"],
