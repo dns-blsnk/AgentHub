@@ -8,6 +8,7 @@ public enum AppPaths {
     }
     public static var registry: URL { support.appendingPathComponent("registry.json") }
     public static var snapshots: URL { support.appendingPathComponent("snapshots", isDirectory: true) }
+    public static var antigravityAccounts: URL { support.appendingPathComponent("antigravity-accounts.json") }
 }
 
 /// The list of MCP servers, without secrets.

@@ -155,6 +155,20 @@ final class CommandLineParserTests: XCTestCase {
     }
 }
 
+final class AntigravityCredentialTests: XCTestCase {
+    func testParsesGoKeyringValue() {
+        let json = #"{"token":{"access_token":"a","refresh_token":"r"},"auth_method":"consumer","id_token_email":"me@example.com"}"#
+        let credential = AntigravityCredential(raw: "go-keyring-base64:" + Data(json.utf8).base64EncodedString())
+        XCTAssertEqual(credential.email, "me@example.com")
+        XCTAssertEqual(credential.authMethod, "consumer")
+    }
+
+    func testUnknownFormatHasNoEmail() {
+        XCTAssertNil(AntigravityCredential(raw: "go-keyring-base64:!!!").email)
+        XCTAssertNil(AntigravityCredential(raw: "plain").email)
+    }
+}
+
 final class PreservationTests: XCTestCase {
     func testCodexKeepsForeignMainKeysIncludingMultiLineValues() {
         let text = """
