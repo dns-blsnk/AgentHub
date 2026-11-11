@@ -1,16 +1,42 @@
 import Foundation
 
 /// Atomic writes replace the file, which would turn a dotfiles symlink into a plain file and reset
-/// permissions; write through the symlink and put the old permissions back.
+/// permissions; write through the symlink and put the old permissions back. A new file is private (0600):
+/// agent configs end up holding tokens.
 enum ConfigFileWriter {
     static func write(_ data: Data, to url: URL) throws {
         let target = url.resolvingSymlinksInPath()
-        let permissions = (try? FileManager.default.attributesOfItem(atPath: target.path))?[.posixPermissions]
+        let permissions = (try? FileManager.default.attributesOfItem(atPath: target.path))?[.posixPermissions] ?? 0o600
         try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: target, options: .atomic)
-        if let permissions {
-            try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: target.path)
+        try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: target.path)
+    }
+}
+
+/// Files that hold secrets or personal data: readable by the owner only.
+public enum PrivateFiles {
+    /// Drops group and other permission bits (e.g. 0644 → 0600). Agent CLIs create their configs world-readable,
+    /// and once AgentHub has put a token there that matters. The owner's own bits stay as they are.
+    public static func restrict(_ url: URL) throws {
+        let target = url.resolvingSymlinksInPath()
+        guard let mode = (try? FileManager.default.attributesOfItem(atPath: target.path))?[.posixPermissions] as? Int else { return }
+        let restricted = mode & 0o700
+        if restricted != mode {
+            try FileManager.default.setAttributes([.posixPermissions: restricted], ofItemAtPath: target.path)
         }
+    }
+
+    /// Creates `directory` (and parents) owner-only, and tightens it if it already exists.
+    public static func makeDirectory(_ directory: URL) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+    }
+
+    /// Writes atomically and leaves the file at 0600.
+    public static func write(_ data: Data, to url: URL) throws {
+        try makeDirectory(url.deletingLastPathComponent())
+        try data.write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 }
 

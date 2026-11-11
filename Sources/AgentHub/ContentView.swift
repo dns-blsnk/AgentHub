@@ -6,6 +6,7 @@ private let agentColumnWidth: CGFloat = 86
 
 struct ContentView: View {
     @Environment(AppModel.self) private var model
+    @Environment(WindowState.self) private var windowState
     @State private var editing: MCPServer?
     @State private var adding = false
     @State private var deleting: MCPServer?
@@ -47,6 +48,12 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // "+ MCP" in the notch panel opens the window with the form.
+        .onChange(of: windowState.addServerRequested, initial: true) { _, requested in
+            guard requested else { return }
+            windowState.addServerRequested = false
+            adding = true
+        }
         .sheet(isPresented: $adding) {
             ServerForm(original: nil)
         }
@@ -255,13 +262,20 @@ private struct AgentCell: View {
     @Environment(AppModel.self) private var model
     let server: MCPServer
     let agent: AgentStatus
+    @State private var confirmingOverwrite = false
 
     var body: some View {
         let error = model.errors[server.id]?[agent.id]
         HStack(spacing: 3) {
             Toggle("", isOn: Binding(
                 get: { server.agents.contains(agent.id) },
-                set: { enabled in Task { await model.setAgent(agent.id, enabled: enabled, for: server) } }
+                set: { enabled in
+                    if enabled && overwritesForeignEntry {
+                        confirmingOverwrite = true
+                    } else {
+                        Task { await model.setAgent(agent.id, enabled: enabled, for: server) }
+                    }
+                }
             ))
             .toggleStyle(.checkbox)
             .labelsHidden()
@@ -278,9 +292,24 @@ private struct AgentCell: View {
             }
         }
         .opacity(supported ? 1 : 0.4)
+        .confirmationDialog(
+            "Replace \(server.name) in \(agent.name)?",
+            isPresented: $confirmingOverwrite
+        ) {
+            Button("Replace", role: .destructive) {
+                Task { await model.setAgent(agent.id, enabled: true, for: server) }
+            }
+        } message: {
+            Text("\(agent.name) already has a server named \"\(server.name)\" that AgentHub didn't add. It will be replaced with AgentHub's definition; a snapshot of the config is kept.")
+        }
         .help(!agent.installed ? "\(agent.name) is not installed"
               : !supported ? "\(agent.name) can't run \(server.transport == .http ? "remote" : "local") servers"
               : "\(server.name) in \(agent.name)")
+    }
+
+    /// The agent has an entry with this name that AgentHub didn't write (hand-made or another tool's).
+    private var overwritesForeignEntry: Bool {
+        agent.serverNames.contains(server.name) && !server.appliedAgents.contains(agent.id)
     }
 
     private func projectHelp(_ projects: [String]) -> String {
@@ -296,5 +325,6 @@ private struct AgentCell: View {
 #Preview {
     ContentView()
         .environment(AppModel.preview())
+        .environment(WindowState())
         .frame(width: 860, height: 460)
 }

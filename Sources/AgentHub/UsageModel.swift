@@ -44,6 +44,12 @@ final class UsageModel {
 
     static func preview() -> UsageModel { UsageModel(preview: ()) }
 
+    /// Used when the notch panel opens: fresh numbers, without hitting the services on every quick hover.
+    func refresh(ifOlderThan seconds: TimeInterval) async {
+        if let lastRefresh, Date().timeIntervalSince(lastRefresh) < seconds { return }
+        await refresh()
+    }
+
     func refresh() async {
         guard !isPreview, !loading else { return }
         loading = true

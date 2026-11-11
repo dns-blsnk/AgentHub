@@ -130,7 +130,7 @@ final class AccountsModel {
 
         """
         do {
-            try FileManager.default.createDirectory(at: AppPaths.support, withIntermediateDirectories: true)
+            try PrivateFiles.makeDirectory(AppPaths.support)
             try body.write(to: script, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
             NSWorkspace.shared.open(script)

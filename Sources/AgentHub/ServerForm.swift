@@ -115,6 +115,7 @@ struct ServerForm: View {
     private var isValid: Bool {
         guard MCPServer.isValidName(name), !nameTaken else { return false }
         if keyRows.contains(where: { $0.trimmedName.isEmpty && !$0.value.isEmpty }) { return false }
+        if keyRows.contains(where: { !MCPServer.isValidValue($0.value) }) { return false }
         for row in filledRows where !MCPServer.isValidKey(row.trimmedName) || isDuplicate(row) { return false }
         switch transport {
         case .stdio: return !CommandLineParser.split(commandLine).isEmpty
@@ -228,6 +229,7 @@ private struct KeyRowEditor: View {
 
     private var problem: String? {
         let name = row.trimmedName
+        if !MCPServer.isValidValue(row.value) { return "Values can't contain line breaks." }
         if name.isEmpty { return row.value.isEmpty ? nil : "Give the value a key name." }
         if !MCPServer.isValidKey(name) { return "No spaces, = or : in key names." }
         if duplicate { return "This key is already listed." }
