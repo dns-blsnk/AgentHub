@@ -6,6 +6,11 @@ public struct AntigravityCredential: Sendable, Equatable {
     public let raw: String
     public let email: String?
     public let authMethod: String?
+    public let accessToken: String?
+    public let expiry: Date?
+
+    /// A minute of margin, so a token isn't used right as it runs out.
+    public var isExpired: Bool { expiry.map { $0 < Date().addingTimeInterval(60) } ?? false }
 
     public init(raw: String) {
         self.raw = raw
@@ -17,6 +22,9 @@ public struct AntigravityCredential: Sendable, Equatable {
         let json = payload.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         email = json?["id_token_email"] as? String
         authMethod = json?["auth_method"] as? String
+        let token = json?["token"] as? [String: Any]
+        accessToken = token?["access_token"] as? String
+        expiry = (token?["expiry"] as? String).flatMap(UsageReader.parseDate)
     }
 }
 

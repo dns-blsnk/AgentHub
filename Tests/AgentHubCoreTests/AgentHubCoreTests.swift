@@ -386,3 +386,63 @@ final class ProjectScopeTests: XCTestCase {
         XCTAssertEqual(try adapter.serverNames(), [])
     }
 }
+
+final class UsageTests: XCTestCase {
+    func testClaudeLimitsList() throws {
+        let json = try JSONSerialization.jsonObject(with: Data(#"""
+        {"five_hour":{"utilization":14.0,"resets_at":"2026-11-12T00:09:59.560491+00:00"},
+         "limits":[{"kind":"session","percent":14,"resets_at":"2026-11-12T00:09:59.560491+00:00","scope":null},
+                   {"kind":"weekly_all","percent":47,"resets_at":"2026-11-14T01:59:59.560514+00:00"},
+                   {"kind":"weekly_scoped","percent":4,"resets_at":"2026-11-14T01:59:59Z","scope":{"model":{"display_name":"Fable"}}}]}
+        """#.utf8)) as! [String: Any]
+        let windows = try UsageReader.claudeWindows(from: json)
+        XCTAssertEqual(windows.map(\.label), ["5-hour session", "Week, all models", "Week, Fable"])
+        XCTAssertEqual(windows.map(\.usedFraction), [0.14, 0.47, 0.04])
+        XCTAssertEqual(windows[0].resetsAt, UsageReader.parseDate("2026-11-12T00:09:59.560Z"))
+    }
+
+    func testClaudeLegacyFields() throws {
+        let json = try JSONSerialization.jsonObject(with: Data(#"{"five_hour":{"utilization":50,"resets_at":null},"seven_day":null}"#.utf8)) as! [String: Any]
+        XCTAssertEqual(try UsageReader.claudeWindows(from: json).map(\.label), ["5-hour session"])
+        XCTAssertThrowsError(try UsageReader.claudeWindows(from: ["error": "x"]))
+    }
+
+    func testAntigravityQuotas() throws {
+        let json = try JSONSerialization.jsonObject(with: Data(#"""
+        {"models":{"claude-sonnet-4-6":{"displayName":"Claude Sonnet 4.6","quotaInfo":{"remainingFraction":0.25,"resetTime":"2026-11-18T20:16:35Z"}},
+                   "gemini-3.8-flash-tiered":{"quotaInfo":{"resetTime":"2026-11-16T15:53:24Z"}},
+                   "tab_x":{"quotaInfo":{"remainingFraction":1}},
+                   "gemini-lite":{"displayName":"Lite","quotaInfo":{"remainingFraction":1}}},
+         "agentModelSorts":[{"groups":[{"modelIds":["claude-sonnet-4-6","missing"]}]}],
+         "tieredModelIds":{"pro":["gemini-3.8-flash-tiered"],"flash":["gemini-3.8-flash-tiered"],"flashLite":["gemini-lite"]}}
+        """#.utf8)) as! [String: Any]
+        let windows = try UsageReader.antigravityWindows(from: json)
+        XCTAssertEqual(windows.map(\.label), ["Claude Sonnet 4.6", "Gemini Pro / Flash", "Lite"])
+        XCTAssertEqual(windows[0].usedFraction ?? -1, 0.75, accuracy: 0.0001)
+        XCTAssertEqual(windows[1].usedFraction, 1)  // reset time without a fraction: used up
+        XCTAssertEqual(windows[2].usedFraction, 0)
+    }
+
+    func testCodexRateLimitsFromSessions() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("2026/03/05")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()) }
+        let lines = [
+            #"{"timestamp":"2026-03-05T12:00:00.000Z","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":10.0,"window_minutes":300,"resets_at":1772733506},"secondary":{"used_percent":3.0,"window_minutes":10080,"resets_at":1773320306},"plan_type":"plus"}}}"#,
+            #"{"timestamp":"2026-03-05T12:59:12.716Z","payload":{"type":"token_count","rate_limits":null}}"#,
+        ]
+        try lines.joined(separator: "\n").write(to: dir.appendingPathComponent("rollout.jsonl"), atomically: true, encoding: .utf8)
+
+        let latest = try XCTUnwrap(UsageReader.latestCodexRateLimits(in: dir.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()))
+        XCTAssertEqual(latest.windows.map(\.label), ["5-hour window", "Week"])
+        XCTAssertEqual(latest.windows.map(\.usedFraction), [0.1, 0.03])
+        XCTAssertEqual(latest.plan, "plus")
+        XCTAssertEqual(latest.at, UsageReader.parseDate("2026-03-05T12:00:00.000Z"))
+    }
+
+    func testParsesGoTimestampsWithNanoseconds() {
+        let parsed = UsageReader.parseDate("2026-11-11T23:16:23.788785+02:00")?.timeIntervalSince1970 ?? 0
+        let expected = UsageReader.parseDate("2026-11-11T21:16:23Z")?.timeIntervalSince1970 ?? -10
+        XCTAssertEqual(parsed, expected, accuracy: 1)
+    }
+}
