@@ -18,7 +18,7 @@ struct AgentHubApp: App {
             }
             .environment(model)
             .environment(accounts)
-            .frame(minWidth: 760, minHeight: 440)
+            .frame(minWidth: 860, minHeight: 480)
         }
         // A menu bar app gets no window by default; open it on launch so changes are visible right away.
         .defaultLaunchBehavior(.presented)

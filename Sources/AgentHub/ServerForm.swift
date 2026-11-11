@@ -1,7 +1,7 @@
 import AgentHubCore
 import SwiftUI
 
-/// Add or edit one MCP server: name, how to reach it, one secret, and which agents get it.
+/// Add or edit one MCP server: name, how to reach it, any number of keys, and which agents get it.
 struct ServerForm: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -12,8 +12,7 @@ struct ServerForm: View {
     @State private var transport = Transport.stdio
     @State private var commandLine = ""
     @State private var url = ""
-    @State private var secretKey = ""
-    @State private var token = ""
+    @State private var keyRows: [KeyRow] = []
     @State private var agents: Set<AgentID> = []
     @State private var saving = false
 
@@ -42,35 +41,50 @@ struct ServerForm: View {
                 }
 
                 Section {
-                    TextField(
-                        transport == .stdio ? "Env variable" : "Header",
-                        text: $secretKey,
-                        prompt: Text(transport == .stdio ? "GITHUB_TOKEN" : "Authorization")
-                    )
-                    SecureField("Token", text: $token, prompt: Text(tokenPrompt))
+                    ForEach($keyRows) { $row in
+                        KeyRowEditor(row: $row, transport: transport, duplicate: isDuplicate(row)) {
+                            keyRows.removeAll { $0.id == row.id }
+                        }
+                    }
+                    Button {
+                        keyRows.append(KeyRow())
+                    } label: {
+                        Label(transport == .stdio ? "Add Variable" : "Add Header", systemImage: "plus")
+                    }
+                    .buttonStyle(.borderless)
                 } header: {
-                    Text("Key")
+                    Text(transport == .stdio ? "Environment variables" : "Headers")
                 } footer: {
-                    Text("The token is kept in the macOS Keychain and written into each agent's config, since agents read it from there.")
+                    Text("Values are kept in the macOS Keychain and written into the config of every agent below, since agents read them from there. A change here reaches all of them on Save.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
-                Section("Agents") {
+                Section {
                     ForEach(model.agents) { agent in
                         VStack(alignment: .leading, spacing: 2) {
                             Toggle(agent.name, isOn: Binding(
                                 get: { agents.contains(agent.id) },
                                 set: { if $0 { agents.insert(agent.id) } else { agents.remove(agent.id) } }
                             ))
-                            .disabled(!agent.installed)
+                            .disabled(!agent.installed || !agent.supports(transport))
                             if !agent.installed {
                                 Text("Not installed").font(.caption).foregroundStyle(.secondary)
+                            } else if !agent.supports(transport) {
+                                Text("Can't run \(transport == .http ? "remote" : "local") servers").font(.caption).foregroundStyle(.secondary)
                             } else if overwrites(agent) {
                                 Text("\(agent.name) already has a server named \"\(name)\"; it will be replaced.")
                                     .font(.caption).foregroundStyle(.orange)
                             }
                         }
                     }
+                } header: {
+                    HStack {
+                        Text("Agents")
+                        Spacer()
+                        Button("All") { agents = Set(model.installedAgents.filter { $0.supports(transport) }.map(\.id)) }
+                        Button("None") { agents = [] }
+                    }
+                    .buttonStyle(.borderless)
                 }
             }
             .formStyle(.grouped)
@@ -90,13 +104,8 @@ struct ServerForm: View {
             }
             .padding(14)
         }
-        .frame(width: 520, height: 600)
+        .frame(width: 560, height: 660)
         .onAppear(perform: load)
-    }
-
-    private var tokenPrompt: String {
-        if let original, model.hasToken(original) { return "Unchanged" }
-        return transport == .http ? "Bearer …" : "Optional"
     }
 
     private var nameTaken: Bool {
@@ -105,15 +114,24 @@ struct ServerForm: View {
 
     private var isValid: Bool {
         guard MCPServer.isValidName(name), !nameTaken else { return false }
+        if keyRows.contains(where: { $0.trimmedName.isEmpty && !$0.value.isEmpty }) { return false }
+        for row in filledRows where !MCPServer.isValidKey(row.trimmedName) || isDuplicate(row) { return false }
         switch transport {
         case .stdio: return !CommandLineParser.split(commandLine).isEmpty
         case .http: return URL(string: url)?.scheme?.hasPrefix("http") == true
         }
     }
 
+    /// Rows with a key name; fully empty rows are ignored.
+    private var filledRows: [KeyRow] { keyRows.filter { !$0.trimmedName.isEmpty } }
+
+    private func isDuplicate(_ row: KeyRow) -> Bool {
+        !row.trimmedName.isEmpty && keyRows.contains { $0.id != row.id && $0.trimmedName == row.trimmedName }
+    }
+
     /// The agent already has this name and AgentHub didn't put it there.
     private func overwrites(_ agent: AgentStatus) -> Bool {
-        agents.contains(agent.id)
+        agents.contains(agent.id) && agent.supports(transport)
             && agent.serverNames.contains(name)
             && !(original?.name == name && original?.appliedAgents.contains(agent.id) == true)
     }
@@ -122,13 +140,16 @@ struct ServerForm: View {
         guard let original else {
             // New servers go to every installed agent; untick the ones that shouldn't get it.
             agents = Set(model.installedAgents.map(\.id))
+            keyRows = [KeyRow()]
             return
         }
         name = original.name
         transport = original.transport
         commandLine = CommandLineParser.join([original.command] + original.args)
         url = original.url
-        secretKey = original.secretKey
+        let values = model.keyValues(for: original)
+        keyRows = original.keys.map { KeyRow(name: $0, value: values[$0] ?? "") }
+        if keyRows.isEmpty { keyRows = [KeyRow()] }
         agents = original.agents
     }
 
@@ -140,14 +161,77 @@ struct ServerForm: View {
         server.command = transport == .stdio ? argv.first ?? "" : ""
         server.args = transport == .stdio ? Array(argv.dropFirst()) : []
         server.url = transport == .http ? url.trimmingCharacters(in: .whitespaces) : ""
-        server.secretKey = secretKey.trimmingCharacters(in: .whitespaces)
-        server.agents = agents
+        server.keys = filledRows.map(\.trimmedName)
+        server.agents = agents.filter { id in model.agents.first { $0.id == id }?.supports(transport) ?? false }
+        let values = Dictionary(
+            filledRows.map { ($0.trimmedName, $0.value.trimmingCharacters(in: .whitespacesAndNewlines)) },
+            uniquingKeysWith: { _, last in last }
+        )
         saving = true
         Task {
-            await model.save(server, token: token.trimmingCharacters(in: .whitespacesAndNewlines))
+            await model.save(server, values: values)
             saving = false
             dismiss()
         }
+    }
+}
+
+struct KeyRow: Identifiable {
+    let id = UUID()
+    var name = ""
+    var value = ""
+
+    var trimmedName: String { name.trimmingCharacters(in: .whitespaces) }
+}
+
+/// One key: name, value (hidden unless revealed) and a remove button.
+private struct KeyRowEditor: View {
+    @Binding var row: KeyRow
+    let transport: Transport
+    let duplicate: Bool
+    let remove: () -> Void
+    @State private var revealed = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                TextField("Key", text: $row.name, prompt: Text(transport == .stdio ? "FIGMA_API_KEY" : "Authorization"))
+                    .labelsHidden()
+                    .font(.body.monospaced())
+                    .frame(width: 180)
+                Group {
+                    if revealed {
+                        TextField("Value", text: $row.value, prompt: Text(valuePrompt))
+                    } else {
+                        SecureField("Value", text: $row.value, prompt: Text(valuePrompt))
+                    }
+                }
+                .labelsHidden()
+                Button { revealed.toggle() } label: {
+                    Image(systemName: revealed ? "eye.slash" : "eye")
+                }
+                .buttonStyle(.borderless)
+                .help(revealed ? "Hide value" : "Show value")
+                Button(action: remove) {
+                    Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.borderless)
+                .help("Remove key")
+            }
+            if let problem {
+                Text(problem).font(.caption).foregroundStyle(.red)
+            }
+        }
+    }
+
+    private var valuePrompt: String { transport == .http ? "Bearer …" : "Value" }
+
+    private var problem: String? {
+        let name = row.trimmedName
+        if name.isEmpty { return row.value.isEmpty ? nil : "Give the value a key name." }
+        if !MCPServer.isValidKey(name) { return "No spaces, = or : in key names." }
+        if duplicate { return "This key is already listed." }
+        return nil
     }
 }
 

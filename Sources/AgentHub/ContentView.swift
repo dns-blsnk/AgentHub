@@ -1,33 +1,39 @@
 import AgentHubCore
 import SwiftUI
 
+/// Width of one agent checkbox column; the server column takes the rest.
+private let agentColumnWidth: CGFloat = 86
+
 struct ContentView: View {
     @Environment(AppModel.self) private var model
     @State private var editing: MCPServer?
     @State private var adding = false
     @State private var deleting: MCPServer?
+    @State private var importing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            AgentStrip()
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+            Header(adding: $adding, importing: $importing)
+                .padding(16)
             Divider()
+
             if model.servers.isEmpty {
                 ContentUnavailableView {
                     Label("No MCP servers yet", systemImage: "point.3.connected.trianglepath.dotted")
                 } description: {
-                    Text("Add a server once and AgentHub writes it into every agent you pick.")
+                    Text("Import the servers your agents already have, or add one with any keys it needs, and AgentHub keeps it in every agent you pick.")
                 } actions: {
-                    Button("Add MCP Server") { adding = true }
-                        .buttonStyle(.borderedProminent)
+                    HStack {
+                        Button("Import from Agents…") { importing = true }
+                            .buttonStyle(.borderedProminent)
+                        Button("Add MCP Server…") { adding = true }
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    ServerGrid(editing: $editing, deleting: $deleting)
-                        .padding(16)
-                }
+                ServerTable(editing: $editing, deleting: $deleting)
             }
+
             if let message = model.message {
                 Divider()
                 HStack {
@@ -40,28 +46,15 @@ struct ContentView: View {
                 .padding(10)
             }
         }
-        .toolbar {
-            ToolbarItem {
-                if model.busy { ProgressView().controlSize(.small) }
-            }
-            ToolbarItem {
-                Button { Task { await model.refreshAgents() } } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .help("Re-detect agents and re-read their configs")
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button { adding = true } label: {
-                    Label("Add MCP Server", systemImage: "plus")
-                }
-                .keyboardShortcut("n")
-            }
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .sheet(isPresented: $adding) {
             ServerForm(original: nil)
         }
         .sheet(item: $editing) { server in
             ServerForm(original: server)
+        }
+        .sheet(isPresented: $importing) {
+            ImportSheet()
         }
         .confirmationDialog(
             "Remove \(deleting?.name ?? "")?",
@@ -72,93 +65,189 @@ struct ContentView: View {
                 Task { await model.delete(server) }
             }
         } message: { _ in
-            Text("It is removed from every agent AgentHub added it to, and its token is deleted from the Keychain.")
+            Text("It is removed from every agent AgentHub added it to, and its key values are deleted from the Keychain.")
         }
     }
 }
 
-/// Detected agents with their config file paths.
+/// Title, detected agents and the actions.
+private struct Header: View {
+    @Environment(AppModel.self) private var model
+    @Binding var adding: Bool
+    @Binding var importing: Bool
+
+    var body: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("MCP servers").font(.headline)
+                AgentStrip()
+            }
+            Spacer()
+            if model.busy { ProgressView().controlSize(.small) }
+            Button { Task { await model.refreshAgents() } } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .help("Re-detect agents and re-read their configs")
+            Button("Import…") { importing = true }
+                .help("Adopt servers that are already in agent configs")
+            Button("Add Server…") { adding = true }
+                .keyboardShortcut("n")
+        }
+    }
+}
+
+/// Detected agents with their config file paths on hover.
 private struct AgentStrip: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             ForEach(model.agents) { agent in
                 HStack(spacing: 5) {
                     Circle()
                         .fill(agent.error != nil ? .orange : agent.installed ? .green : .secondary.opacity(0.4))
                         .frame(width: 7, height: 7)
                     Text(agent.name)
-                        .foregroundStyle(agent.installed ? .primary : .secondary)
+                        .foregroundStyle(agent.installed ? .secondary : .tertiary)
                 }
-                .font(.callout)
-                .help(agent.error ?? (agent.installed ? "\(agent.configPath) · \(agent.serverNames.count) server(s)" : "Not installed"))
+                .help(agent.error ?? (agent.installed ? stripHelp(agent) : "Not installed"))
             }
             if model.agents.isEmpty {
-                ProgressView().controlSize(.small)
+                ProgressView().controlSize(.mini)
                 Text("Detecting agents…").foregroundStyle(.secondary)
             }
-            Spacer()
         }
+        .font(.callout)
+    }
+
+    private func stripHelp(_ agent: AgentStatus) -> String {
+        var text = "\(agent.configPath) · \(agent.serverNames.count) global server(s)"
+        if !agent.projectServers.isEmpty { text += ", \(agent.projectServers.count) more in project scope" }
+        return text
     }
 }
 
-/// Servers as rows, agents as checkbox columns.
-private struct ServerGrid: View {
+/// Servers as rows, agents as checkbox columns: each server is on exactly for the agents ticked in its row.
+private struct ServerTable: View {
     @Environment(AppModel.self) private var model
     @Binding var editing: MCPServer?
     @Binding var deleting: MCPServer?
 
     var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 12) {
-            GridRow {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
                 Text("Server")
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 ForEach(model.agents) { agent in
                     Text(agent.name)
-                        .gridColumnAlignment(.center)
+                        .lineLimit(1)
+                        .frame(width: agentColumnWidth)
                         .foregroundStyle(agent.installed ? .secondary : .tertiary)
                 }
-                Text("")
+                Color.clear.frame(width: 28, height: 1)
             }
-            .font(.caption)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
             Divider()
-            ForEach(model.servers) { server in
-                GridRow {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(server.name).fontWeight(.medium)
-                        Text(subtitle(server))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    .frame(maxWidth: 280, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .onTapGesture(count: 2) { editing = server }
 
-                    ForEach(model.agents) { agent in
-                        AgentCell(server: server, agent: agent)
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(model.servers) { server in
+                        ServerRow(server: server, editing: $editing, deleting: $deleting)
+                        Divider().padding(.leading, 16)
                     }
-
-                    Menu {
-                        Button("Edit…") { editing = server }
-                        Button("Remove…", role: .destructive) { deleting = server }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
                 }
             }
         }
         .disabled(model.busy)
     }
+}
 
-    private func subtitle(_ server: MCPServer) -> String {
-        let target = server.transport == .stdio
-            ? CommandLineParser.join([server.command] + server.args)
-            : server.url
-        return server.secretKey.isEmpty ? target : "\(target) · \(server.secretKey)"
+private struct ServerRow: View {
+    @Environment(AppModel.self) private var model
+    let server: MCPServer
+    @Binding var editing: MCPServer?
+    @Binding var deleting: MCPServer?
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(server.name).fontWeight(.medium)
+                HStack(spacing: 4) {
+                    Image(systemName: server.transport == .stdio ? "terminal" : "globe")
+                    Text(target)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                if !server.keys.isEmpty {
+                    KeyChips(keys: server.keys)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, 12)
+
+            ForEach(model.agents) { agent in
+                AgentCell(server: server, agent: agent)
+                    .frame(width: agentColumnWidth)
+            }
+
+            Menu {
+                actions
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: 28)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(hovering ? Color.primary.opacity(0.04) : .clear)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture(count: 2) { editing = server }
+        .contextMenu { actions }
+    }
+
+    @ViewBuilder private var actions: some View {
+        Button("Edit…") { editing = server }
+        Divider()
+        Button("Enable for All Agents") { Task { await model.setAllAgents(enabled: true, for: server) } }
+        Button("Disable for All Agents") { Task { await model.setAllAgents(enabled: false, for: server) } }
+        Divider()
+        Button("Remove…", role: .destructive) { deleting = server }
+    }
+
+    private var target: String {
+        server.transport == .stdio ? CommandLineParser.join([server.command] + server.args) : server.url
+    }
+}
+
+/// Key names only; values never leave the Keychain for display.
+private struct KeyChips: View {
+    let keys: [String]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "key").foregroundStyle(.secondary)
+            ForEach(keys.prefix(4), id: \.self) { key in
+                Text(key)
+                    .font(.caption2.monospaced())
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+            }
+            if keys.count > 4 {
+                Text("+\(keys.count - 4)").foregroundStyle(.secondary)
+            }
+        }
+        .font(.caption2)
+        .lineLimit(1)
     }
 }
 
@@ -176,20 +265,36 @@ private struct AgentCell: View {
             ))
             .toggleStyle(.checkbox)
             .labelsHidden()
-            .disabled(!agent.installed)
+            .disabled(!agent.installed || !supported)
             if let error {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
                     .help(error)
+            } else if let projects = agent.projectServers[server.name] {
+                Image(systemName: "folder.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help(projectHelp(projects))
             }
         }
-        .gridColumnAlignment(.center)
-        .help(agent.installed ? "" : "\(agent.name) is not installed")
+        .opacity(supported ? 1 : 0.4)
+        .help(!agent.installed ? "\(agent.name) is not installed"
+              : !supported ? "\(agent.name) can't run \(server.transport == .http ? "remote" : "local") servers"
+              : "\(server.name) in \(agent.name)")
+    }
+
+    private func projectHelp(_ projects: [String]) -> String {
+        let names = projects.map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")
+        return "Also in \(agent.name) project scope: \(names). AgentHub manages user scope only and leaves project files alone; the checkbox makes \(server.name) global."
+    }
+
+    private var supported: Bool {
+        agent.supports(server.transport) || server.agents.contains(agent.id)
     }
 }
 
 #Preview {
     ContentView()
         .environment(AppModel.preview())
-        .frame(width: 820, height: 460)
+        .frame(width: 860, height: 460)
 }

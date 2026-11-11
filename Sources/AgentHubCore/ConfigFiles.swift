@@ -43,6 +43,32 @@ enum JSONConfigFile {
         return servers.keys.sorted()
     }
 
+    /// `url` / `httpUrl` (Gemini) / `serverUrl` (Antigravity) are remote; `type: sse` has no AgentHub equivalent.
+    static func readServers(_ url: URL) throws -> [FoundServer] {
+        let servers = try load(url)["mcpServers"] as? [String: Any] ?? [:]
+        return servers.keys.sorted().compactMap { name in
+            guard let entry = servers[name] as? [String: Any], (entry["type"] as? String) != "sse" else { return nil }
+            if let command = entry["command"] as? String {
+                let env = stringDictionary(entry["env"])
+                return FoundServer(
+                    server: MCPServer(name: name, transport: .stdio, command: command,
+                                      args: entry["args"] as? [String] ?? [], keys: env.keys.sorted()),
+                    values: env
+                )
+            }
+            guard let remote = (entry["url"] ?? entry["httpUrl"] ?? entry["serverUrl"]) as? String else { return nil }
+            let headers = stringDictionary(entry["headers"])
+            return FoundServer(
+                server: MCPServer(name: name, transport: .http, url: remote, keys: headers.keys.sorted()),
+                values: headers
+            )
+        }
+    }
+
+    private static func stringDictionary(_ value: Any?) -> [String: String] {
+        (value as? [String: Any] ?? [:]).compactMapValues { $0 as? String }
+    }
+
     /// Keys AgentHub writes; anything else in an existing entry (timeouts, trust flags…) is kept.
     static let ownedEntryKeys: Set<String> = ["command", "args", "env", "url", "httpUrl", "headers", "type"]
 
@@ -72,15 +98,114 @@ public enum CodexTOML {
         return names
     }
 
-    public static func upserting(_ server: MCPServer, token: String?, in text: String) -> String {
-        let block = self.block(for: server, token: token)
+    /// Servers from `[mcp_servers.<name>]` tables, with `env` / `http_headers` either as sub-tables or inline tables.
+    /// Other keys (`bearer_token_env_var`, timeouts…) aren't part of the registry and stay in the file on update.
+    public static func readServers(in text: String) -> [FoundServer] {
+        var order: [String] = []
+        var main: [String: [String: String]] = [:]  // raw values of the main table
+        var keys: [String: [String: String]] = [:]
+        var path: [String] = []
+        var pending = ""
+
+        for line in text.components(separatedBy: "\n") {
+            if pending.isEmpty, let header = tablePath(line) {
+                path = header
+                if header.count >= 2, header[0] == "mcp_servers", !order.contains(header[1]) { order.append(header[1]) }
+                continue
+            }
+            guard path.count >= 2, path[0] == "mcp_servers" else { continue }
+            pending += (pending.isEmpty ? "" : "\n") + line
+            if bracketDelta(pending) > 0 { continue }  // a multi-line array or inline table goes on
+            defer { pending = "" }
+            let parts = pending.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            guard parts.count == 2, !parts[0].hasPrefix("#") else { continue }
+            let key = unquoted(parts[0])
+            let name = path[1]
+            if path.count == 2 {
+                if ["env", "http_headers"].contains(key) {
+                    keys[name, default: [:]].merge(inlineTable(parts[1])) { _, new in new }
+                } else {
+                    main[name, default: [:]][key] = parts[1]
+                }
+            } else if path.count == 3, ["env", "http_headers"].contains(path[2]), let value = strings(in: parts[1]).first {
+                keys[name, default: [:]][key] = value
+            }
+        }
+
+        return order.compactMap { name in
+            let table = main[name] ?? [:]
+            let values = keys[name] ?? [:]
+            if let command = table["command"].flatMap({ strings(in: $0).first }) {
+                let args = table["args"].map(strings(in:)) ?? []
+                return FoundServer(server: MCPServer(name: name, transport: .stdio, command: command, args: args,
+                                                     keys: values.keys.sorted()), values: values)
+            }
+            if let url = table["url"].flatMap({ strings(in: $0).first }) {
+                return FoundServer(server: MCPServer(name: name, transport: .http, url: url, keys: values.keys.sorted()),
+                                   values: values)
+            }
+            return nil
+        }
+    }
+
+    /// Every basic or literal string in a TOML value, in order: one for a string, all items for an array.
+    static func strings(in value: String) -> [String] {
+        var result: [String] = []
+        var current: String?
+        var quote: Character = "\""
+        var escaped = false
+        for char in value {
+            guard current != nil else {
+                if char == "#" { break }
+                if char == "\"" || char == "'" { current = ""; quote = char }
+                continue
+            }
+            if escaped {
+                switch char {
+                case "n": current!.append("\n")
+                case "t": current!.append("\t")
+                case "r": current!.append("\r")
+                default: current!.append(char)
+                }
+                escaped = false
+            } else if char == "\\" && quote == "\"" {
+                escaped = true
+            } else if char == quote {
+                result.append(current!)
+                current = nil
+            } else {
+                current!.append(char)
+            }
+        }
+        return result
+    }
+
+    /// `{ A = "x", "B-C" = 'y' }` → `["A": "x", "B-C": "y"]`.
+    static func inlineTable(_ value: String) -> [String: String] {
+        var body = value.trimmingCharacters(in: .whitespaces)
+        guard body.hasPrefix("{"), body.hasSuffix("}") else { return [:] }
+        body = String(body.dropFirst().dropLast())
+        var result: [String: String] = [:]
+        for pair in body.split(separator: ",") {
+            let parts = pair.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            if parts.count == 2, let value = strings(in: parts[1]).first { result[unquoted(parts[0])] = value }
+        }
+        return result
+    }
+
+    private static func unquoted(_ key: String) -> String {
+        key.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+    }
+
+    public static func upserting(_ server: MCPServer, values: [String: String], in text: String) -> String {
+        let block = self.block(for: server, values: values)
         var lines = text.components(separatedBy: "\n")
         if let firstStart = blockRange(of: server.name, in: lines)?.lowerBound {
             // Keep the server where it was, and keep tables AgentHub doesn't own (e.g. per-tool `approval_mode`).
             let kept = foreignSubtables(of: server.name, in: lines)
             let mainKeys = foreignMainKeys(of: server.name, in: lines)
             removeAllBlocks(of: server.name, from: &lines)
-            var replacement = self.block(for: server, token: token, extraMainLines: mainKeys).components(separatedBy: "\n") + [""]
+            var replacement = self.block(for: server, values: values, extraMainLines: mainKeys).components(separatedBy: "\n") + [""]
             if !kept.isEmpty { replacement += kept + [""] }
             lines.insert(contentsOf: replacement, at: min(firstStart, lines.count))
             return lines.joined(separator: "\n")
@@ -168,7 +293,8 @@ public enum CodexTOML {
         }
     }
 
-    static func block(for server: MCPServer, token: String?, extraMainLines: [String] = []) -> String {
+    static func block(for server: MCPServer, values: [String: String], extraMainLines: [String] = []) -> String {
+        let pairs = server.keyValues(values).map { "\(quoted($0.key)) = \(quoted($0.value))" }
         let table = "mcp_servers.\(server.name)"
         var lines = ["[\(table)]"]
         switch server.transport {
@@ -176,15 +302,11 @@ public enum CodexTOML {
             lines.append("command = \(quoted(server.command))")
             lines.append("args = [\(server.args.map(quoted).joined(separator: ", "))]")
             lines += extraMainLines
-            if let secret = server.secret(token: token) {
-                lines += ["", "[\(table).env]", "\(quoted(secret.key)) = \(quoted(secret.value))"]
-            }
+            if !pairs.isEmpty { lines += ["", "[\(table).env]"] + pairs }
         case .http:
             lines.append("url = \(quoted(server.url))")
             lines += extraMainLines
-            if let secret = server.secret(token: token) {
-                lines += ["", "[\(table).http_headers]", "\(quoted(secret.key)) = \(quoted(secret.value))"]
-            }
+            if !pairs.isEmpty { lines += ["", "[\(table).http_headers]"] + pairs }
         }
         return lines.joined(separator: "\n")
     }
