@@ -18,7 +18,7 @@ public struct MCPSync: Sendable {
 
     /// Writes `server` to the agents in `server.agents` and removes it from agents AgentHub wrote it to before.
     /// `previousName` handles renames. The returned `appliedAgents` reflects what actually succeeded.
-    public func apply(_ server: MCPServer, token: String?, previousName: String? = nil) -> (appliedAgents: Set<AgentID>, outcomes: [AgentID: SyncOutcome]) {
+    public func apply(_ server: MCPServer, values: [String: String], previousName: String? = nil) -> (appliedAgents: Set<AgentID>, outcomes: [AgentID: SyncOutcome]) {
         let session = snapshots.makeSession()
         snapshots.prune(keeping: 100)
         var applied = server.appliedAgents
@@ -30,13 +30,18 @@ public struct MCPSync: Sendable {
             let renamed = previousName != nil && previousName != server.name
             guard wanted || wasApplied else { continue }
 
+            if wanted && !adapter.supports(server.transport) {
+                outcomes[adapter.id] = .failed("\(adapter.displayName) can't run \(server.transport == .http ? "remote" : "local") servers")
+                continue
+            }
+
             do {
                 try snapshots.save(adapter.configURL, agent: adapter.id, in: session)
                 if wasApplied && renamed, let previousName {
                     try removeIfPresent(previousName, from: adapter)
                 }
                 if wanted {
-                    try adapter.upsert(server, token: token)
+                    try adapter.upsert(server, values: values)
                     applied.insert(adapter.id)
                     outcomes[adapter.id] = .applied
                 } else {
@@ -62,6 +67,6 @@ public struct MCPSync: Sendable {
     public func removeEverywhere(_ server: MCPServer) -> (appliedAgents: Set<AgentID>, outcomes: [AgentID: SyncOutcome]) {
         var target = server
         target.agents = []
-        return apply(target, token: nil)
+        return apply(target, values: [:])
     }
 }

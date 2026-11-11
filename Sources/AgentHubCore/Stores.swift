@@ -73,6 +73,41 @@ public struct KeychainStore: Sendable {
     }
 }
 
+/// Key values of MCP servers: one Keychain item per server, holding a JSON object `{key: value}`.
+public struct ServerKeyStore: Sendable {
+    public let keychain: KeychainStore
+
+    public init(keychain: KeychainStore) { self.keychain = keychain }
+
+    public func values(for server: MCPServer) -> [String: String] {
+        Self.decode(keychain.get(server.id.uuidString), keys: server.keys)
+    }
+
+    /// Only the server's own keys are stored, so a removed key's value doesn't linger.
+    public func setValues(_ values: [String: String], for server: MCPServer) throws {
+        let own = values.filter { server.keys.contains($0.key) && !$0.value.isEmpty }
+        if own.isEmpty {
+            keychain.delete(server.id.uuidString)
+            return
+        }
+        let data = try JSONSerialization.data(withJSONObject: own, options: .sortedKeys)
+        try keychain.set(String(decoding: data, as: UTF8.self), account: server.id.uuidString)
+    }
+
+    public func delete(_ server: MCPServer) {
+        keychain.delete(server.id.uuidString)
+    }
+
+    /// v0.1 stored the bare token of the server's single key.
+    static func decode(_ stored: String?, keys: [String]) -> [String: String] {
+        guard let stored, !stored.isEmpty else { return [:] }
+        if let object = try? JSONSerialization.jsonObject(with: Data(stored.utf8)) as? [String: String] {
+            return object
+        }
+        return keys.first.map { [$0: stored] } ?? [:]
+    }
+}
+
 /// Copies of agent config files taken before AgentHub changes them.
 public struct SnapshotStore: Sendable {
     public let root: URL

@@ -26,8 +26,8 @@ final class CodexTOMLTests: XCTestCase {
     """
 
     func testUpsertReplacesOnlyThatServerAndKeepsForeignSubtables() {
-        let server = MCPServer(name: "figma", transport: .stdio, command: "node", args: ["a b.js"], secretKey: "FIGMA_API_KEY")
-        let result = CodexTOML.upserting(server, token: "new\"token", in: existing)
+        let server = MCPServer(name: "figma", transport: .stdio, command: "node", args: ["a b.js"], keys: ["FIGMA_API_KEY"])
+        let result = CodexTOML.upserting(server, values: ["FIGMA_API_KEY": "new\"token"], in: existing)
 
         XCTAssertTrue(result.hasPrefix("model = \"gpt-5\"\n\n# keep me\n[projects.\"/tmp/repo\"]\ntrust_level = \"trusted\"\n"))
         XCTAssertTrue(result.contains("[mcp_servers.figma]\ncommand = \"node\"\nargs = [\"a b.js\"]\n\n[mcp_servers.figma.env]\n\"FIGMA_API_KEY\" = \"new\\\"token\""))
@@ -38,8 +38,8 @@ final class CodexTOMLTests: XCTestCase {
     }
 
     func testUpsertAppendsNewHTTPServer() {
-        let server = MCPServer(name: "gitlab", transport: .http, url: "https://gl.example/mcp", secretKey: "Private-Token")
-        let result = CodexTOML.upserting(server, token: "t", in: existing)
+        let server = MCPServer(name: "gitlab", transport: .http, url: "https://gl.example/mcp", keys: ["Private-Token"])
+        let result = CodexTOML.upserting(server, values: ["Private-Token": "t"], in: existing)
         XCTAssertTrue(result.hasSuffix("[mcp_servers.gitlab]\nurl = \"https://gl.example/mcp\"\n\n[mcp_servers.gitlab.http_headers]\n\"Private-Token\" = \"t\"\n"))
         XCTAssertTrue(result.hasPrefix(existing.trimmingCharacters(in: .newlines)))
     }
@@ -57,28 +57,28 @@ final class CodexTOMLTests: XCTestCase {
 
     func testEmptyFile() {
         let server = MCPServer(name: "x", transport: .stdio, command: "x")
-        XCTAssertEqual(CodexTOML.upserting(server, token: nil, in: ""), "[mcp_servers.x]\ncommand = \"x\"\nargs = []\n")
+        XCTAssertEqual(CodexTOML.upserting(server, values: [:], in: ""), "[mcp_servers.x]\ncommand = \"x\"\nargs = []\n")
     }
 }
 
 final class CLIArgumentTests: XCTestCase {
     func testClaudeStdio() {
-        let server = MCPServer(name: "gh", transport: .stdio, command: "npx", args: ["-y", "pkg"], secretKey: "GITHUB_TOKEN")
+        let server = MCPServer(name: "gh", transport: .stdio, command: "npx", args: ["-y", "pkg"], keys: ["GITHUB_TOKEN"])
         XCTAssertEqual(
-            ClaudeAdapter.addArguments(server, token: "t"),
+            ClaudeAdapter.addArguments(server, values: ["GITHUB_TOKEN": "t"]),
             ["mcp", "add", "-s", "user", "gh", "-e", "GITHUB_TOKEN=t", "--", "npx", "-y", "pkg"]
         )
     }
 
     func testClaudeHTTPWithoutToken() {
-        let server = MCPServer(name: "s", transport: .http, url: "https://x/mcp", secretKey: "Authorization")
-        XCTAssertEqual(ClaudeAdapter.addArguments(server, token: nil), ["mcp", "add", "-s", "user", "-t", "http", "s", "https://x/mcp"])
+        let server = MCPServer(name: "s", transport: .http, url: "https://x/mcp", keys: ["Authorization"])
+        XCTAssertEqual(ClaudeAdapter.addArguments(server, values: [:]), ["mcp", "add", "-s", "user", "-t", "http", "s", "https://x/mcp"])
     }
 
     func testAntigravityFlagsBeforeName() {
-        let server = MCPServer(name: "s", transport: .http, url: "https://x/mcp", secretKey: "Authorization")
+        let server = MCPServer(name: "s", transport: .http, url: "https://x/mcp", keys: ["Authorization"])
         XCTAssertEqual(
-            AntigravityAdapter.addArguments(server, token: "Bearer t"),
+            AntigravityAdapter.addArguments(server, values: ["Authorization": "Bearer t"]),
             ["mcp", "add", "--type", "http", "--header", "Authorization: Bearer t", "s", "https://x/mcp"]
         )
     }
@@ -93,8 +93,8 @@ final class JSONAdapterTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: home) }
 
         let adapter = CursorAdapter(runner: CommandRunner(home: home, searchPath: []))
-        let server = MCPServer(name: "remote", transport: .http, url: "https://r/mcp", secretKey: "Authorization")
-        try adapter.upsert(server, token: "Bearer t")
+        let server = MCPServer(name: "remote", transport: .http, url: "https://r/mcp", keys: ["Authorization"])
+        try adapter.upsert(server, values: ["Authorization": "Bearer t"])
         XCTAssertEqual(try adapter.serverNames(), ["mine", "remote"])
 
         let root = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as! [String: Any]
@@ -115,7 +115,7 @@ final class JSONAdapterTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: home) }
 
         let adapter = GeminiAdapter(runner: CommandRunner(home: home, searchPath: []))
-        XCTAssertThrowsError(try adapter.upsert(MCPServer(name: "x", transport: .stdio, command: "x"), token: nil))
+        XCTAssertThrowsError(try adapter.upsert(MCPServer(name: "x", transport: .stdio, command: "x"), values: [:]))
         XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "{\n  // comment\n  \"a\": 1\n}")
     }
 }
@@ -133,13 +133,13 @@ final class SyncTests: XCTestCase {
             snapshots: SnapshotStore(root: home.appendingPathComponent("snapshots"))
         )
         // Not wanted and never applied: the hand-made entry must survive.
-        let result = sync.apply(MCPServer(name: "figma", transport: .stdio, command: "x"), token: nil)
+        let result = sync.apply(MCPServer(name: "figma", transport: .stdio, command: "x"), values: [:])
         XCTAssertTrue(result.outcomes.isEmpty)
         XCTAssertTrue(try String(contentsOf: file, encoding: .utf8).contains("hand-made"))
 
         // Rename of an applied server removes the old name and writes the new one, with a snapshot.
         let applied = MCPServer(name: "figma2", transport: .stdio, command: "x", agents: [.cursor], appliedAgents: [.cursor])
-        let renamed = sync.apply(applied, token: nil, previousName: "figma")
+        let renamed = sync.apply(applied, values: [:], previousName: "figma")
         XCTAssertEqual(renamed.outcomes[.cursor], .applied)
         XCTAssertEqual(try CursorAdapter(runner: CommandRunner(home: home, searchPath: [])).serverNames(), ["figma2"])
         let sessions = try FileManager.default.contentsOfDirectory(atPath: home.appendingPathComponent("snapshots").path)
@@ -187,8 +187,8 @@ final class PreservationTests: XCTestCase {
         T = "old"
 
         """
-        let server = MCPServer(name: "gh", transport: .stdio, command: "new", secretKey: "T")
-        let result = CodexTOML.upserting(server, token: "t", in: text)
+        let server = MCPServer(name: "gh", transport: .stdio, command: "new", keys: ["T"])
+        let result = CodexTOML.upserting(server, values: ["T": "t"], in: text)
         XCTAssertEqual(result, """
         [mcp_servers.gh]
         command = "new"
@@ -216,7 +216,7 @@ final class PreservationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: home) }
 
         let adapter = CursorAdapter(runner: CommandRunner(home: home, searchPath: []))
-        try adapter.upsert(MCPServer(name: "gh", transport: .http, url: "https://x/mcp"), token: nil)
+        try adapter.upsert(MCPServer(name: "gh", transport: .http, url: "https://x/mcp"), values: [:])
 
         XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: link.path), real.path)
         let perms = try FileManager.default.attributesOfItem(atPath: real.path)[.posixPermissions] as? Int
@@ -226,5 +226,163 @@ final class PreservationTests: XCTestCase {
         XCTAssertEqual(entry["timeout"] as? Int, 30)
         XCTAssertEqual(entry["url"] as? String, "https://x/mcp")
         XCTAssertNil(entry["command"])
+    }
+}
+
+final class MultipleKeysTests: XCTestCase {
+    let server = MCPServer(name: "figma", transport: .stdio, command: "npx", args: ["figma"], keys: ["FIGMA_TOKEN", "FIGMA_TEAM", "UNSET"])
+    let values = ["FIGMA_TOKEN": "t", "FIGMA_TEAM": "42", "STALE": "x"]
+
+    func testEveryKeyWithAValueReachesEachAgentFormat() {
+        XCTAssertEqual(
+            ClaudeAdapter.addArguments(server, values: values),
+            ["mcp", "add", "-s", "user", "figma", "-e", "FIGMA_TOKEN=t", "-e", "FIGMA_TEAM=42", "--", "npx", "figma"]
+        )
+        XCTAssertEqual(
+            AntigravityAdapter.addArguments(server, values: values),
+            ["mcp", "add", "--env", "FIGMA_TOKEN=t", "--env", "FIGMA_TEAM=42", "figma", "--", "npx", "figma"]
+        )
+        XCTAssertEqual(
+            CodexTOML.upserting(server, values: values, in: ""),
+            "[mcp_servers.figma]\ncommand = \"npx\"\nargs = [\"figma\"]\n\n[mcp_servers.figma.env]\n\"FIGMA_TOKEN\" = \"t\"\n\"FIGMA_TEAM\" = \"42\"\n"
+        )
+        XCTAssertEqual(CursorAdapter.entry(server, values: values)["env"] as? [String: String], ["FIGMA_TOKEN": "t", "FIGMA_TEAM": "42"])
+    }
+
+    func testLegacyRegistryAndKeychainValue() throws {
+        let json = #"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","name":"gh","transport":"stdio","command":"npx","args":[],"url":"","secretKey":"GITHUB_TOKEN","agents":["codex"],"appliedAgents":[]}"#
+        let legacy = try JSONDecoder().decode(MCPServer.self, from: Data(json.utf8))
+        XCTAssertEqual(legacy.keys, ["GITHUB_TOKEN"])
+        XCTAssertEqual(ServerKeyStore.decode("raw-token", keys: legacy.keys), ["GITHUB_TOKEN": "raw-token"])
+        XCTAssertEqual(ServerKeyStore.decode(#"{"A":"1","B":"2"}"#, keys: ["A", "B"]), ["A": "1", "B": "2"])
+
+        let roundTrip = try JSONDecoder().decode(MCPServer.self, from: JSONEncoder().encode(server))
+        XCTAssertEqual(roundTrip, server)
+    }
+
+    func testKeyValidation() {
+        XCTAssertTrue(MCPServer.isValidKey("X-Api-Key"))
+        XCTAssertFalse(MCPServer.isValidKey("A B"))
+        XCTAssertFalse(MCPServer.isValidKey("A=B"))
+        XCTAssertFalse(MCPServer.isValidKey("Auth:"))
+    }
+}
+
+final class ImportTests: XCTestCase {
+    func testReadsCodexServers() {
+        let text = """
+        model = "gpt-5"
+
+        [mcp_servers.gl]
+        url = "https://gl.example/mcp" # comment
+        bearer_token_env_var = "GL"
+
+        [mcp_servers.gl.http_headers]
+        "Private-Token" = "t"
+
+        [mcp_servers.gl.tools.x]
+        approval_mode = "approve"
+
+        [mcp_servers.sentry]
+        command = "npx"
+        args = [
+          "-y",
+          'pkg@1, 2',
+        ]
+        startup_timeout_sec = 60.0
+        env = { SENTRY_HOST = "h", "A-B" = "a\\"b" }
+
+        [mcp_servers.broken]
+        startup_timeout_sec = 1
+        """
+        let servers = CodexTOML.readServers(in: text)
+        XCTAssertEqual(servers.map(\.server.name), ["gl", "sentry"])
+        XCTAssertEqual(servers[0].server.transport, .http)
+        XCTAssertEqual(servers[0].server.url, "https://gl.example/mcp")
+        XCTAssertEqual(servers[0].values, ["Private-Token": "t"])
+        XCTAssertEqual(servers[1].server.command, "npx")
+        XCTAssertEqual(servers[1].server.args, ["-y", "pkg@1, 2"])
+        XCTAssertEqual(servers[1].values, ["SENTRY_HOST": "h", "A-B": "a\"b"])
+        XCTAssertEqual(servers[1].server.keys, ["A-B", "SENTRY_HOST"])
+    }
+
+    func testReadsJSONServersAndSkipsSSE() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let file = home.appendingPathComponent(".gemini/config/mcp_config.json")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"mcpServers":{"a":{"command":"x","args":["1"],"env":{"K":"v"}},"b":{"serverUrl":"https://b/mcp","headers":{"H":"h"}},"c":{"type":"sse","url":"https://c"}}}"#.utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        let servers = try AntigravityAdapter(runner: CommandRunner(home: home, searchPath: [])).readServers()
+        XCTAssertEqual(servers.map(\.server.name), ["a", "b"])
+        XCTAssertEqual(servers[0].values, ["K": "v"])
+        XCTAssertEqual(servers[1].server.url, "https://b/mcp")
+        XCTAssertEqual(servers[1].values, ["H": "h"])
+    }
+
+    func testCandidatesMergeEqualDefinitionsAndKeepVariants() {
+        func stdio(_ name: String, _ arg: String) -> FoundServer {
+            FoundServer(server: MCPServer(name: name, transport: .stdio, command: "npx", args: [arg]), values: [:])
+        }
+        let candidates = ServerImport.candidates(found: [
+            (.codex, [stdio("figma", "a"), stdio("mine", "x")]),
+            (.cursor, [stdio("figma", "b")]),
+            (.claudeDesktop, [stdio("figma", "b"), stdio("bad name", "x")]),
+        ], existingNames: ["mine"])
+
+        XCTAssertEqual(candidates.map(\.name), ["figma"])
+        let figma = candidates[0]
+        XCTAssertEqual(figma.variants.map(\.agents), [[.codex], [.cursor, .claudeDesktop]])
+        XCTAssertEqual(figma.suggestedVariant, 1)
+        let (server, _) = figma.server(variant: 1)
+        XCTAssertEqual(server.agents, [.cursor, .claudeDesktop])
+        XCTAssertEqual(server.appliedAgents, [.cursor, .claudeDesktop])
+    }
+
+    func testFlagsSecretsInArguments() {
+        let found = FoundServer(server: MCPServer(name: "f", transport: .stdio, command: "npx",
+                                                  args: ["-y", "pkg", "--figma-api-key=abc", "--token", "t", "--stdio"]), values: [:])
+        XCTAssertEqual(found.secretLikeArguments, ["--figma-api-key", "--token"])
+    }
+
+    func testDesktopWritesRemoteServersThroughMCPRemoteAndReadsThemBack() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let file = home.appendingPathComponent("Library/Application Support/Claude/claude_desktop_config.json")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"mcpServers":{"own":{"command":"npx","args":["mcp-remote","https://o","--header","A:${X}"],"env":{"X":"1"}}}}"#.utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        let adapter = ClaudeDesktopAdapter(runner: CommandRunner(home: home, searchPath: []))
+        let server = MCPServer(name: "gl", transport: .http, url: "https://gl/mcp", keys: ["Private-Token"])
+        try adapter.upsert(server, values: ["Private-Token": "glpat x"])
+
+        let root = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as! [String: Any]
+        let entry = (root["mcpServers"] as! [String: Any])["gl"] as! [String: Any]
+        XCTAssertEqual(entry["command"] as? String, "npx")
+        XCTAssertEqual(entry["args"] as? [String], ["-y", "mcp-remote", "https://gl/mcp", "--header", "Private-Token:${MCP_HEADER_PRIVATE_TOKEN}"])
+        XCTAssertEqual(entry["env"] as? [String: String], ["MCP_HEADER_PRIVATE_TOKEN": "glpat x"])
+
+        let read = try adapter.readServers()
+        XCTAssertEqual(read.map(\.server.name), ["gl", "own"])
+        XCTAssertEqual(read[0].server.transport, .http)
+        XCTAssertEqual(read[0].values, ["Private-Token": "glpat x"])
+        XCTAssertEqual(read[1].server.transport, .stdio)  // hand-made mcp-remote stays as it is
+    }
+}
+
+final class ProjectScopeTests: XCTestCase {
+    func testClaudeProjectServersFromLocalScopeAndMCPJSON() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let project = home.appendingPathComponent("work/app")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try Data(#"{"mcpServers":{"jira":{"type":"http","url":"https://j","headers":{"Authorization":"Token ${JIRA_PAT}"}}}}"#.utf8)
+            .write(to: project.appendingPathComponent(".mcp.json"))
+        let state = #"{"mcpServers":{},"projects":{"\#(project.path)":{"mcpServers":{"figma":{"command":"npx"}}},"/nowhere":{}}}"#
+        try Data(state.utf8).write(to: home.appendingPathComponent(".claude.json"))
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        let adapter = ClaudeAdapter(runner: CommandRunner(home: home, searchPath: []))
+        XCTAssertEqual(adapter.projectServers(), ["jira": [project.path], "figma": [project.path]])
+        XCTAssertEqual(try adapter.serverNames(), [])
     }
 }
