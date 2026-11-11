@@ -42,6 +42,8 @@ public struct MCPSync: Sendable {
                 }
                 if wanted {
                     try adapter.upsert(server, values: values)
+                    // The agent's own CLI may have created the file world-readable; it now holds the token.
+                    if !server.keyValues(values).isEmpty { try PrivateFiles.restrict(adapter.configURL) }
                     applied.insert(adapter.id)
                     outcomes[adapter.id] = .applied
                 } else {

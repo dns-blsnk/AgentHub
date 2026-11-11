@@ -122,11 +122,10 @@ public struct AntigravityAccountStore: Sendable {
     }
 
     public func save(_ accounts: [AntigravityAccount]) throws {
-        try FileManager.default.createDirectory(at: metadataURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
-        try encoder.encode(accounts).write(to: metadataURL, options: .atomic)
+        try PrivateFiles.write(try encoder.encode(accounts), to: metadataURL)
     }
 
     /// Adds the account or refreshes its saved sign-in.

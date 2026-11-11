@@ -22,11 +22,11 @@ public struct RegistryStore: Sendable {
         return (try? JSONDecoder().decode([MCPServer].self, from: data)) ?? []
     }
 
+    /// Private: arguments can carry secrets the user typed into a command line.
     public func save(_ servers: [MCPServer]) throws {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(servers).write(to: url, options: .atomic)
+        try PrivateFiles.write(try encoder.encode(servers), to: url)
     }
 }
 
@@ -134,9 +134,12 @@ public struct SnapshotStore: Sendable {
     public func save(_ file: URL, agent: AgentID, in session: URL) throws {
         let file = file.resolvingSymlinksInPath()  // copy the content, not a dotfiles symlink
         guard FileManager.default.fileExists(atPath: file.path) else { return }
-        try FileManager.default.createDirectory(at: session, withIntermediateDirectories: true)
+        // Snapshots hold the same tokens as the configs, whatever permissions those have.
+        try PrivateFiles.makeDirectory(root)
+        try PrivateFiles.makeDirectory(session)
         let target = session.appendingPathComponent("\(agent.rawValue)-\(file.lastPathComponent)")
         guard !FileManager.default.fileExists(atPath: target.path) else { return }
         try FileManager.default.copyItem(at: file, to: target)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
     }
 }

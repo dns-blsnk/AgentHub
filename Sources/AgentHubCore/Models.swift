@@ -89,10 +89,15 @@ public struct MCPServer: Codable, Identifiable, Hashable, Sendable {
         !key.isEmpty && key.allSatisfy { $0.isASCII && !$0.isWhitespace && $0 != "=" && $0 != ":" && !$0.isNewline }
     }
 
+    /// A value becomes one header line or env entry; a line break would smuggle in another one.
+    public static func isValidValue(_ value: String) -> Bool {
+        !value.contains(where: { $0.isNewline || $0 == "\0" })
+    }
+
     /// The keys that have a value, in order. Keys without a value are left out of agent configs.
     public func keyValues(_ values: [String: String]) -> [(key: String, value: String)] {
         keys.compactMap { key in
-            guard let value = values[key], !value.isEmpty else { return nil }
+            guard let value = values[key], !value.isEmpty, Self.isValidValue(value) else { return nil }
             return (key, value)
         }
     }

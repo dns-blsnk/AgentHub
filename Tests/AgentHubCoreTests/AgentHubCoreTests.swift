@@ -446,3 +446,49 @@ final class UsageTests: XCTestCase {
         XCTAssertEqual(parsed, expected, accuracy: 1)
     }
 }
+
+final class SecurityTests: XCTestCase {
+    func testNewConfigFilesAreOwnerOnlyAndTokenWritesTightenAgentFiles() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let cursor = CursorAdapter(runner: CommandRunner(home: home, searchPath: []))
+        try FileManager.default.createDirectory(at: home.appendingPathComponent(".cursor"), withIntermediateDirectories: true)
+
+        // A new file written by AgentHub is created private.
+        try cursor.upsert(MCPServer(name: "a", transport: .stdio, command: "x"), values: [:])
+        XCTAssertEqual(try mode(cursor.configURL), 0o600)
+
+        // A world-readable file (as agent CLIs create them) is tightened once a token goes in.
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: cursor.configURL.path)
+        let sync = MCPSync(adapters: [cursor], snapshots: SnapshotStore(root: home.appendingPathComponent("snapshots")))
+        let server = MCPServer(name: "b", transport: .stdio, command: "x", keys: ["T"], agents: [.cursor])
+        XCTAssertEqual(sync.apply(server, values: ["T": "secret"]).outcomes[.cursor], .applied)
+        XCTAssertEqual(try mode(cursor.configURL), 0o600)
+
+        // Its snapshot (taken while it was still 0644) is private too, in a private folder.
+        let snapshots = home.appendingPathComponent("snapshots")
+        XCTAssertEqual(try mode(snapshots), 0o700)
+        let session = try XCTUnwrap(FileManager.default.contentsOfDirectory(at: snapshots, includingPropertiesForKeys: nil).first)
+        XCTAssertEqual(try mode(session.appendingPathComponent("cursor-mcp.json")), 0o600)
+    }
+
+    func testRegistryIsPrivate() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = RegistryStore(url: dir.appendingPathComponent("registry.json"))
+        try store.save([MCPServer(name: "a", transport: .stdio, command: "x", args: ["--token=t"])])
+        XCTAssertEqual(try mode(store.url), 0o600)
+        XCTAssertEqual(try mode(dir), 0o700)
+    }
+
+    func testLineBreaksInValuesNeverReachConfigs() {
+        XCTAssertFalse(MCPServer.isValidValue("Bearer t\r\nX-Evil: 1"))
+        let server = MCPServer(name: "s", transport: .http, url: "https://x", keys: ["Authorization"])
+        XCTAssertEqual(ClaudeAdapter.addArguments(server, values: ["Authorization": "t\nX: y"]),
+                       ["mcp", "add", "-s", "user", "-t", "http", "s", "https://x"])
+    }
+
+    private func mode(_ url: URL) throws -> Int {
+        try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as! Int
+    }
+}
