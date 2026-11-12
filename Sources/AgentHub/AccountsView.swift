@@ -1,62 +1,84 @@
 import AgentHubCore
 import SwiftUI
 
-/// Saved Antigravity CLI accounts with switch / add / remove.
+/// Saved accounts of every agent AgentHub switches, with switch / add / forget.
 struct AccountsView: View {
-    @Environment(AccountsModel.self) private var model
-    @State private var forgetting: AntigravityAccount?
+    @Environment(AllAccounts.self) private var all
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Antigravity accounts").font(.headline)
-                    Text("Switches the Google account the `agy` CLI signs in with.")
+                    Text("Accounts").font(.headline)
+                    Text("The account in use is saved automatically; switch between saved ones in a click.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button { Task { await model.refresh() } } label: {
+                Button { Task { for model in all.models { await model.refresh() } } } label: {
                     Image(systemName: "arrow.clockwise")
                 }
-                .help("Re-read the current sign-in")
-                Button("Add Account…") { Task { await model.startAdding() } }
-                    .disabled(model.adding || model.busy)
+                .help("Re-read the current sign-ins")
             }
             .padding(16)
             Divider()
 
+            ScrollView {
+                VStack(spacing: 14) {
+                    ForEach(all.models) { model in
+                        AccountsSection(model: model)
+                    }
+                }
+                .padding(16)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onAppear { Task { for model in all.models { await model.refresh() } } }
+    }
+}
+
+private struct AccountsSection: View {
+    let model: AccountsModel
+    @State private var forgetting: SavedAccount?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(model.kind.name).font(.title3.weight(.semibold))
+                if model.runningSessions > 0 {
+                    Text("\(model.runningSessions) running").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if model.busy { ProgressView().controlSize(.small) }
+                Button("Add Account…") { Task { await model.startAdding() } }
+                    .disabled(model.adding || model.busy)
+            }
+
             if model.adding {
-                AddingBanner()
-                Divider()
+                AddingBanner(model: model)
             }
 
             if model.accounts.isEmpty && !model.adding {
-                ContentUnavailableView {
-                    Label("No accounts yet", systemImage: "person.crop.circle.badge.plus")
-                } description: {
-                    Text("Sign in with `agy` once, or press Add Account. The account in use is saved automatically.")
-                }
-            } else {
-                List(model.accounts) { account in
-                    AccountRow(account: account, forgetting: $forgetting)
-                }
-                .listStyle(.inset)
+                Text("No accounts yet. Sign in to \(model.kind.name) once, or press Add Account.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            ForEach(model.accounts) { account in
+                AccountRow(model: model, account: account, forgetting: $forgetting)
+                if account.id != model.accounts.last?.id { Divider() }
             }
 
             if let message = model.message {
-                Divider()
-                HStack {
+                HStack(alignment: .top) {
                     Image(systemName: "info.circle").foregroundStyle(.secondary)
                     Text(message).textSelection(.enabled)
                     Spacer()
-                    Button("Dismiss") { model.message = nil }
+                    Button("Dismiss") { model.message = nil }.buttonStyle(.borderless)
                 }
                 .font(.callout)
-                .padding(10)
             }
         }
+        .padding(14)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
         .disabled(model.busy)
-        .onAppear { Task { await model.refresh() } }
         .confirmationDialog(
             "Forget \(forgetting?.email ?? "")?",
             isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }),
@@ -70,9 +92,9 @@ struct AccountsView: View {
 }
 
 private struct AccountRow: View {
-    @Environment(AccountsModel.self) private var model
-    let account: AntigravityAccount
-    @Binding var forgetting: AntigravityAccount?
+    let model: AccountsModel
+    let account: SavedAccount
+    @Binding var forgetting: SavedAccount?
 
     var body: some View {
         let active = account.email == model.activeEmail
@@ -82,7 +104,7 @@ private struct AccountRow: View {
                 .font(.title3)
             VStack(alignment: .leading, spacing: 2) {
                 Text(account.email).fontWeight(active ? .semibold : .regular)
-                Text(detail(active: active)).font(.caption).foregroundStyle(.secondary)
+                Text(detail).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
             if active {
@@ -100,16 +122,15 @@ private struct AccountRow: View {
             .fixedSize()
         }
         .disabled(model.adding)
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { Task { await model.switchTo(account) } }
     }
 
-    private func detail(active: Bool) -> String {
-        var parts = [account.authMethod.isEmpty ? "Google" : account.authMethod]
-        if active, model.runningSessions > 0 {
-            parts.append("\(model.runningSessions) agy session(s) running")
-        } else if let used = account.lastUsedAt {
+    private var detail: String {
+        var parts: [String] = []
+        if !account.authMethod.isEmpty { parts.append(account.authMethod) }
+        if let used = account.lastUsedAt {
             parts.append("used \(used.formatted(.relative(presentation: .named)))")
         }
         return parts.joined(separator: " · ")
@@ -117,26 +138,26 @@ private struct AccountRow: View {
 }
 
 private struct AddingBanner: View {
-    @Environment(AccountsModel.self) private var model
+    let model: AccountsModel
 
     var body: some View {
         HStack(spacing: 10) {
             ProgressView().controlSize(.small)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Waiting for sign-in…").fontWeight(.medium)
-                Text("Sign in with the new account in the Terminal window that opened. It's added as soon as agy saves it.")
+                Text("Sign in with the new account in the Terminal window that opened. It's added as soon as \(model.kind.name) saves it.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
             Button("Cancel") { Task { await model.cancelAdding() } }
         }
-        .padding(12)
-        .background(.blue.opacity(0.08))
+        .padding(10)
+        .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
 #Preview {
     AccountsView()
-        .environment(AccountsModel.preview())
-        .frame(width: 620, height: 380)
+        .environment(AllAccounts.preview())
+        .frame(width: 720, height: 520)
 }

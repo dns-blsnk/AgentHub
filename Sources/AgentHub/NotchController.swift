@@ -77,7 +77,7 @@ final class NotchController {
     private static let closeDelay: TimeInterval = 0.35
     static let panelWidth: CGFloat = 440
 
-    init(usage: UsageModel, accounts: AccountsModel, sessions: SessionsModel, actions: NotchActions) {
+    init(usage: UsageModel, accounts: AllAccounts, sessions: SessionsModel, actions: NotchActions) {
         let hover = HoverView()
         hover.onEnter = { [weak self] in self?.cursorEnteredZone() }
         trigger.contentView = hover

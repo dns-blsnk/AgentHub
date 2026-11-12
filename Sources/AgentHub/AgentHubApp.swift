@@ -20,7 +20,7 @@ struct AgentHubApp: App {
 @MainActor
 @Observable
 final class WindowState {
-    enum Tab: Hashable { case servers, usage, antigravity }
+    enum Tab: Hashable { case servers, usage, accounts }
     var tab = Tab.servers
     var addServerRequested = false
 }
@@ -29,7 +29,7 @@ final class WindowState {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
-    let accounts = AccountsModel()
+    let accounts = AllAccounts.live()
     let usage = UsageModel()
     let windowState = WindowState()
     let loginItem = LoginItem()
@@ -100,7 +100,7 @@ struct MainView: View {
             Tab("Usage", systemImage: "gauge.with.dots.needle.50percent", value: WindowState.Tab.usage) {
                 UsageView()
             }
-            Tab("Antigravity", systemImage: "person.2.circle", value: WindowState.Tab.antigravity) {
+            Tab("Accounts", systemImage: "person.2.circle", value: WindowState.Tab.accounts) {
                 AccountsView()
             }
         }
@@ -111,7 +111,7 @@ struct MainView: View {
 private struct MenuBarContent: View {
     let openMain: () -> Void
     @Environment(AppModel.self) private var model
-    @Environment(AccountsModel.self) private var accounts
+    @Environment(AllAccounts.self) private var accounts
     @Environment(UsageModel.self) private var usage
     @Environment(LoginItem.self) private var loginItem
 
@@ -130,16 +130,10 @@ private struct MenuBarContent: View {
             }
         }
 
-        if !accounts.accounts.isEmpty {
+        ForEach(accounts.models.filter { !$0.accounts.isEmpty }) { model in
             Divider()
-            Section("Antigravity account") {
-                ForEach(accounts.accounts) { account in
-                    Toggle(account.email, isOn: Binding(
-                        get: { account.email == accounts.activeEmail },
-                        set: { if $0 { Task { await accounts.switchTo(account) } } }
-                    ))
-                    .disabled(accounts.adding)
-                }
+            Section("\(model.kind.name) account") {
+                AccountToggles(model: model)
             }
         }
 
@@ -153,3 +147,17 @@ private struct MenuBarContent: View {
     }
 }
 
+/// One checkmark per saved account; picking another switches to it.
+struct AccountToggles: View {
+    let model: AccountsModel
+
+    var body: some View {
+        ForEach(model.accounts) { account in
+            Toggle(account.email, isOn: Binding(
+                get: { account.email == model.activeEmail },
+                set: { if $0 { Task { await model.switchTo(account) } } }
+            ))
+            .disabled(model.adding)
+        }
+    }
+}
