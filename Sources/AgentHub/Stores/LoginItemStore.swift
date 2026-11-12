@@ -5,7 +5,7 @@ import ServiceManagement
 /// Starting AgentHub at login, so the notch panel is there after a restart.
 @MainActor
 @Observable
-final class LoginItem {
+final class LoginItemStore {
     private(set) var enabled = false
     var message: String?
 

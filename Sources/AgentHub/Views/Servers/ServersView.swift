@@ -4,9 +4,9 @@ import SwiftUI
 /// Width of one agent checkbox column; the server column takes the rest.
 private let agentColumnWidth: CGFloat = 86
 
-struct ContentView: View {
-    @Environment(AppModel.self) private var model
-    @Environment(WindowState.self) private var windowState
+struct ServersView: View {
+    @Environment(ServerStore.self) private var store
+    @Environment(NavigationStore.self) private var navigation
     @State private var editing: MCPServer?
     @State private var adding = false
     @State private var deleting: MCPServer?
@@ -18,7 +18,7 @@ struct ContentView: View {
                 .padding(16)
             Divider()
 
-            if model.servers.isEmpty {
+            if store.servers.isEmpty {
                 ContentUnavailableView {
                     Label("No MCP servers yet", systemImage: "point.3.connected.trianglepath.dotted")
                 } description: {
@@ -35,13 +35,13 @@ struct ContentView: View {
                 ServerTable(editing: $editing, deleting: $deleting)
             }
 
-            if let message = model.message {
+            if let message = store.message {
                 Divider()
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     Text(message).textSelection(.enabled)
                     Spacer()
-                    Button("Dismiss") { model.message = nil }
+                    Button("Dismiss") { store.message = nil }
                 }
                 .font(.callout)
                 .padding(10)
@@ -49,9 +49,9 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // "+ MCP" in the notch panel opens the window with the form.
-        .onChange(of: windowState.addServerRequested, initial: true) { _, requested in
+        .onChange(of: navigation.addServerRequested, initial: true) { _, requested in
             guard requested else { return }
-            windowState.addServerRequested = false
+            navigation.addServerRequested = false
             adding = true
         }
         .sheet(isPresented: $adding) {
@@ -69,7 +69,7 @@ struct ContentView: View {
             presenting: deleting
         ) { server in
             Button("Remove from all agents", role: .destructive) {
-                Task { await model.delete(server) }
+                Task { await store.delete(server) }
             }
         } message: { _ in
             Text("It is removed from every agent AgentHub added it to, and its key values are deleted from the Keychain.")
@@ -79,7 +79,7 @@ struct ContentView: View {
 
 /// Title, detected agents and the actions.
 private struct Header: View {
-    @Environment(AppModel.self) private var model
+    @Environment(ServerStore.self) private var store
     @Binding var adding: Bool
     @Binding var importing: Bool
 
@@ -90,8 +90,8 @@ private struct Header: View {
                 AgentStrip()
             }
             Spacer()
-            if model.busy { ProgressView().controlSize(.small) }
-            Button { Task { await model.refreshAgents() } } label: {
+            if store.busy { ProgressView().controlSize(.small) }
+            Button { Task { await store.refreshAgents() } } label: {
                 Image(systemName: "arrow.clockwise")
             }
             .help("Re-detect agents and re-read their configs")
@@ -105,11 +105,11 @@ private struct Header: View {
 
 /// Detected agents with their config file paths on hover.
 private struct AgentStrip: View {
-    @Environment(AppModel.self) private var model
+    @Environment(ServerStore.self) private var store
 
     var body: some View {
         HStack(spacing: 12) {
-            ForEach(model.agents) { agent in
+            ForEach(store.agents) { agent in
                 HStack(spacing: 5) {
                     Circle()
                         .fill(agent.error != nil ? .orange : agent.installed ? .green : .secondary.opacity(0.4))
@@ -119,7 +119,7 @@ private struct AgentStrip: View {
                 }
                 .help(agent.error ?? (agent.installed ? stripHelp(agent) : "Not installed"))
             }
-            if model.agents.isEmpty {
+            if store.agents.isEmpty {
                 ProgressView().controlSize(.mini)
                 Text("Detecting agents…").foregroundStyle(.secondary)
             }
@@ -136,7 +136,7 @@ private struct AgentStrip: View {
 
 /// Servers as rows, agents as checkbox columns: each server is on exactly for the agents ticked in its row.
 private struct ServerTable: View {
-    @Environment(AppModel.self) private var model
+    @Environment(ServerStore.self) private var store
     @Binding var editing: MCPServer?
     @Binding var deleting: MCPServer?
 
@@ -145,7 +145,7 @@ private struct ServerTable: View {
             HStack(spacing: 0) {
                 Text("Server")
                     .frame(maxWidth: .infinity, alignment: .leading)
-                ForEach(model.agents) { agent in
+                ForEach(store.agents) { agent in
                     Text(agent.name)
                         .lineLimit(1)
                         .frame(width: agentColumnWidth)
@@ -161,19 +161,19 @@ private struct ServerTable: View {
 
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(model.servers) { server in
+                    ForEach(store.servers) { server in
                         ServerRow(server: server, editing: $editing, deleting: $deleting)
                         Divider().padding(.leading, 16)
                     }
                 }
             }
         }
-        .disabled(model.busy)
+        .disabled(store.busy)
     }
 }
 
 private struct ServerRow: View {
-    @Environment(AppModel.self) private var model
+    @Environment(ServerStore.self) private var store
     let server: MCPServer
     @Binding var editing: MCPServer?
     @Binding var deleting: MCPServer?
@@ -198,7 +198,7 @@ private struct ServerRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.trailing, 12)
 
-            ForEach(model.agents) { agent in
+            ForEach(store.agents) { agent in
                 AgentCell(server: server, agent: agent)
                     .frame(width: agentColumnWidth)
             }
@@ -224,8 +224,8 @@ private struct ServerRow: View {
     @ViewBuilder private var actions: some View {
         Button("Edit…") { editing = server }
         Divider()
-        Button("Enable for All Agents") { Task { await model.setAllAgents(enabled: true, for: server) } }
-        Button("Disable for All Agents") { Task { await model.setAllAgents(enabled: false, for: server) } }
+        Button("Enable for All Agents") { Task { await store.setAllAgents(enabled: true, for: server) } }
+        Button("Disable for All Agents") { Task { await store.setAllAgents(enabled: false, for: server) } }
         Divider()
         Button("Remove…", role: .destructive) { deleting = server }
     }
@@ -259,13 +259,13 @@ private struct KeyChips: View {
 }
 
 private struct AgentCell: View {
-    @Environment(AppModel.self) private var model
+    @Environment(ServerStore.self) private var store
     let server: MCPServer
     let agent: AgentStatus
     @State private var confirmingOverwrite = false
 
     var body: some View {
-        let error = model.errors[server.id]?[agent.id]
+        let error = store.errors[server.id]?[agent.id]
         HStack(spacing: 3) {
             Toggle("", isOn: Binding(
                 get: { server.agents.contains(agent.id) },
@@ -273,7 +273,7 @@ private struct AgentCell: View {
                     if enabled && overwritesForeignEntry {
                         confirmingOverwrite = true
                     } else {
-                        Task { await model.setAgent(agent.id, enabled: enabled, for: server) }
+                        Task { await store.setAgent(agent.id, enabled: enabled, for: server) }
                     }
                 }
             ))
@@ -297,7 +297,7 @@ private struct AgentCell: View {
             isPresented: $confirmingOverwrite
         ) {
             Button("Replace", role: .destructive) {
-                Task { await model.setAgent(agent.id, enabled: true, for: server) }
+                Task { await store.setAgent(agent.id, enabled: true, for: server) }
             }
         } message: {
             Text("\(agent.name) already has a server named \"\(server.name)\" that AgentHub didn't add. It will be replaced with AgentHub's definition; a snapshot of the config is kept.")
@@ -323,8 +323,8 @@ private struct AgentCell: View {
 }
 
 #Preview {
-    ContentView()
-        .environment(AppModel.preview())
-        .environment(WindowState())
+    ServersView()
+        .environment(ServerStore.preview())
+        .environment(NavigationStore())
         .frame(width: 860, height: 460)
 }

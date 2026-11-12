@@ -24,6 +24,11 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
 
     public var id: String { "\(agent.rawValue)-\(pid)" }
     public var project: String { cwd.isEmpty ? "" : (cwd as NSString).lastPathComponent }
+    /// "project · session name", or just the project when the name adds nothing.
+    public var title: String {
+        guard let name, !name.isEmpty, name != project else { return project }
+        return "\(project) · \(name)"
+    }
 
     public init(agent: AgentID, pid: Int32, cwd: String, name: String? = nil, state: SessionState, since: Date? = nil) {
         self.agent = agent

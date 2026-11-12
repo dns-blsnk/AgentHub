@@ -5,13 +5,13 @@ import Observation
 /// Limits of every agent that reports them, re-read every few minutes while the app runs.
 @MainActor
 @Observable
-final class UsageModel {
+final class UsageStore {
     var usages: [AgentUsage] = []
     var loading = false
     var lastRefresh: Date?
 
-    /// Called when a limit window crosses `alertThreshold` between two reads.
-    @ObservationIgnored var onThreshold: (AgentUsage, UsageWindow) -> Void = { _, _ in }
+    /// Event: a limit window crossed `alertThreshold` between two reads.
+    @ObservationIgnored var onLimitCrossed: (AgentUsage, UsageWindow) -> Void = { _, _ in }
     static let alertThreshold = 0.8
 
     /// The sources are rate-limited services; once every five minutes is plenty for a menu bar glance.
@@ -46,7 +46,7 @@ final class UsageModel {
         lastRefresh = now
     }
 
-    static func preview() -> UsageModel { UsageModel(preview: ()) }
+    static func preview() -> UsageStore { UsageStore(preview: ()) }
 
     /// Used when the notch panel opens: fresh numbers, without hitting the services on every quick hover.
     func refresh(ifOlderThan seconds: TimeInterval) async {
@@ -71,25 +71,8 @@ final class UsageModel {
             for window in usage.windows {
                 guard let used = window.usedFraction, used >= Self.alertThreshold else { continue }
                 let previous = before?.windows.first { $0.id == window.id }?.usedFraction ?? 0
-                if previous < Self.alertThreshold { onThreshold(usage, window) }
+                if previous < Self.alertThreshold { onLimitCrossed(usage, window) }
             }
-        }
-    }
-
-    /// Short text for the menu bar, e.g. "Claude 5h 14% · week 47%".
-    func summary(for usage: AgentUsage) -> String? {
-        let parts = usage.windows.prefix(2).compactMap { window -> String? in
-            guard let used = window.usedFraction else { return nil }
-            return "\(Self.shortLabel(window.label)) \(Int((used * 100).rounded()))%"
-        }
-        return parts.isEmpty ? nil : "\(usage.name): " + parts.joined(separator: " · ")
-    }
-
-    private static func shortLabel(_ label: String) -> String {
-        switch label {
-        case "5-hour session", "5-hour window": return "5h"
-        case "Week, all models", "Week": return "week"
-        default: return label
         }
     }
 }

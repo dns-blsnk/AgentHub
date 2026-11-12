@@ -5,12 +5,12 @@ import SwiftUI
 /// Collapsed it is the notch itself; with an alert it is a pill just below it. The view's size sizes the
 /// window, so nothing transparent is left covering the screen.
 struct NotchPanelView: View {
-    let state: NotchState
-    let actions: NotchActions
+    /// Reports the view's size to the host, which sizes the window to it.
     let onSize: (CGSize) -> Void
 
-    @Environment(UsageModel.self) private var usage
-    @Environment(SessionsModel.self) private var sessions
+    @Environment(NotchStore.self) private var notch
+    @Environment(UsageStore.self) private var usage
+    @Environment(SessionStore.self) private var sessions
 
     /// Agents with too many quotas (Antigravity lists every model) show only the first few here.
     private static let maxWindowsPerAgent = 4
@@ -18,24 +18,29 @@ struct NotchPanelView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            if state.expanded {
+            if notch.expanded {
                 content.transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
-            } else if let alert = state.alert {
-                AlertPill(alert: alert, notchHeight: state.notchHeight, onTap: { state.onPillTap(alert) })
-                    .onHover { if $0 { state.onPillHover() } }
-                    .transition(.opacity)
+            } else if let alert = notch.alert {
+                AlertPill(alert: alert, notchHeight: notch.notchHeight) {
+                    if let pid = alert.pid { sessions.focus(pid: pid) }
+                    notch.resolve(alert.id)
+                }
+                .onHover { if $0 { notch.requestOpen() } }
+                .transition(.opacity)
             }
         }
-        .frame(width: width, height: state.expanded || state.alert != nil ? nil : state.notchHeight, alignment: .top)
-        .background(NotchShape(radius: state.expanded ? 22 : state.alert != nil ? 18 : 10).fill(.black))
+        .frame(width: width, height: notch.isVisible ? nil : notch.notchHeight, alignment: .top)
+        .background(NotchShape(radius: notch.expanded ? 22 : notch.alert != nil ? 18 : 10).fill(.black))
         .fixedSize(horizontal: false, vertical: true)
+        .animation(notch.expanded ? .spring(duration: 0.3, bounce: 0.15) : .easeIn(duration: 0.18), value: notch.expanded)
+        .animation(.spring(duration: 0.35, bounce: 0.25), value: notch.alert)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { onSize($0) }
         .environment(\.colorScheme, .dark)
     }
 
     private var width: CGFloat {
-        if state.expanded { return NotchController.panelWidth }
-        return state.alert != nil ? Self.pillWidth : state.notchWidth
+        if notch.expanded { return NotchController.panelWidth }
+        return notch.alert != nil ? Self.pillWidth : notch.notchWidth
     }
 
     private var content: some View {
@@ -51,10 +56,13 @@ struct NotchPanelView: View {
                 }
             }
             // Below the camera housing, the part of the panel that is visible.
-            .padding(.top, max(state.notchHeight - 18, 6))
+            .padding(.top, max(notch.notchHeight - 18, 6))
 
             if !sessions.sessions.isEmpty {
-                SessionsSection(sessions: sessions.sessions, onTap: state.onSessionTap)
+                SessionsSection(sessions: sessions.sessions) { pid in
+                    sessions.focus(pid: pid)
+                    notch.collapse()
+                }
                 Divider().overlay(.white.opacity(0.15))
             }
 
@@ -66,7 +74,7 @@ struct NotchPanelView: View {
             }
 
             Divider().overlay(.white.opacity(0.15))
-            QuickActions(actions: actions)
+            QuickActions()
         }
         .padding(.horizontal, 18)
         .padding(.bottom, 14)
@@ -148,10 +156,10 @@ private struct SessionRow: View {
                 .fill(color)
                 .frame(width: 7, height: 7)
                 .opacity(session.state == .working ? 0.9 : 1)
-            Text(SessionsModel.agentName(session.agent))
+            Text(session.agent.shortName)
                 .foregroundStyle(.secondary)
                 .frame(width: 70, alignment: .leading)
-            Text(SessionsModel.label(session))
+            Text(session.title)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 4)
@@ -298,17 +306,16 @@ private struct Bar: View {
 }
 
 private struct QuickActions: View {
-    let actions: NotchActions
-    @Environment(AllAccounts.self) private var accounts
+    @Environment(AccountsStore.self) private var accounts
+    @Environment(NavigationStore.self) private var navigation
 
     var body: some View {
         HStack(spacing: 8) {
-            let withAccounts = accounts.models.filter { !$0.accounts.isEmpty }
-            if !withAccounts.isEmpty {
+            if !accounts.switchable.isEmpty {
                 Menu {
-                    ForEach(withAccounts) { model in
-                        Section(model.kind.name) {
-                            AccountToggles(model: model)
+                    ForEach(accounts.switchable) { agent in
+                        Section(agent.name) {
+                            AccountToggles(agent: agent)
                         }
                     }
                 } label: {
@@ -319,10 +326,10 @@ private struct QuickActions: View {
                 .help("Switch the account of an agent")
             }
             Spacer()
-            Button { actions.addServer() } label: {
+            Button { navigation.openMain(addingServer: true) } label: {
                 Label("MCP", systemImage: "plus")
             }
-            Button { actions.openMain() } label: {
+            Button { navigation.openMain() } label: {
                 Label("Open", systemImage: "arrow.up.forward.app")
             }
         }

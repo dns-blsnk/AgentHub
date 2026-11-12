@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Servers found in agent configs, to adopt into the registry. Importing writes nothing to the agents.
 struct ImportSheet: View {
-    @Environment(AppModel.self) private var model
+    @Environment(ServerStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
     @State private var candidates: [ImportCandidate]?
@@ -70,7 +70,7 @@ struct ImportSheet: View {
         }
         .frame(width: 640, height: 560)
         .task {
-            let found = await model.findImportCandidates()
+            let found = await store.findImportCandidates()
             candidates = found
             selected = Set(found.map(\.name))
         }
@@ -83,7 +83,7 @@ struct ImportSheet: View {
             .map { (candidate: $0, variant: variants[$0.name] ?? $0.suggestedVariant) }
         importing = true
         Task {
-            await model.importServers(picks)
+            await store.importServers(picks)
             importing = false
             dismiss()
         }
@@ -91,7 +91,7 @@ struct ImportSheet: View {
 }
 
 private struct CandidateRow: View {
-    @Environment(AppModel.self) private var model
+    @Environment(ServerStore.self) private var store
     let candidate: ImportCandidate
     @Binding var selected: Bool
     @Binding var variant: Int
@@ -176,6 +176,6 @@ private struct CandidateRow: View {
     }
 
     private func agentNames(_ ids: [AgentID]) -> String {
-        ids.map { id in model.agents.first { $0.id == id }?.name ?? id.rawValue }.joined(separator: ", ")
+        ids.map { id in store.agents.first { $0.id == id }?.name ?? id.rawValue }.joined(separator: ", ")
     }
 }
