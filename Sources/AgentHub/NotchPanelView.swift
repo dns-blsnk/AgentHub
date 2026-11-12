@@ -1,33 +1,41 @@
 import AgentHubCore
 import SwiftUI
 
-/// The panel that grows out of the notch: limits per agent and a few quick actions.
-/// It is always laid out at full size (that size sizes the window); only the black shape and the content animate.
+/// The panel that grows out of the notch: running sessions, limits per agent and a few quick actions.
+/// Collapsed it is the notch itself; with an alert it is a pill just below it. The view's size sizes the
+/// window, so nothing transparent is left covering the screen.
 struct NotchPanelView: View {
     let state: NotchState
     let actions: NotchActions
     let onSize: (CGSize) -> Void
 
     @Environment(UsageModel.self) private var usage
+    @Environment(SessionsModel.self) private var sessions
 
     /// Agents with too many quotas (Antigravity lists every model) show only the first few here.
     private static let maxWindowsPerAgent = 4
+    private static let pillWidth: CGFloat = 380
 
     var body: some View {
         ZStack(alignment: .top) {
-            NotchShape(radius: state.expanded ? 22 : 10)
-                .fill(.black)
-                .frame(width: state.expanded ? nil : state.notchWidth, height: state.expanded ? nil : state.notchHeight)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-
-            content
-                .opacity(state.expanded ? 1 : 0)
-                .scaleEffect(state.expanded ? 1 : 0.92, anchor: .top)
+            if state.expanded {
+                content.transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
+            } else if let alert = state.alert {
+                AlertPill(alert: alert, notchHeight: state.notchHeight, onTap: { state.onPillTap(alert) })
+                    .onHover { if $0 { state.onPillHover() } }
+                    .transition(.opacity)
+            }
         }
-        .frame(width: NotchController.panelWidth)
+        .frame(width: width, height: state.expanded || state.alert != nil ? nil : state.notchHeight, alignment: .top)
+        .background(NotchShape(radius: state.expanded ? 22 : state.alert != nil ? 18 : 10).fill(.black))
         .fixedSize(horizontal: false, vertical: true)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { onSize($0) }
         .environment(\.colorScheme, .dark)
+    }
+
+    private var width: CGFloat {
+        if state.expanded { return NotchController.panelWidth }
+        return state.alert != nil ? Self.pillWidth : state.notchWidth
     }
 
     private var content: some View {
@@ -45,6 +53,11 @@ struct NotchPanelView: View {
             // Below the camera housing, the part of the panel that is visible.
             .padding(.top, max(state.notchHeight - 18, 6))
 
+            if !sessions.sessions.isEmpty {
+                SessionsSection(sessions: sessions.sessions, onTap: state.onSessionTap)
+                Divider().overlay(.white.opacity(0.15))
+            }
+
             if usage.usages.isEmpty {
                 Text("Reading limits…").font(.callout).foregroundStyle(.secondary)
             }
@@ -58,6 +71,126 @@ struct NotchPanelView: View {
         .padding(.horizontal, 18)
         .padding(.bottom, 14)
         .foregroundStyle(.white)
+    }
+}
+
+/// The Dynamic Island style message: one line below the camera, tap to jump to the session.
+private struct AlertPill: View {
+    let alert: IslandAlert
+    let notchHeight: CGFloat
+    let onTap: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(color)
+                .symbolEffect(.pulse, isActive: alert.kind == .waiting)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(alert.title).font(.callout.weight(.semibold)).lineLimit(1)
+                if !alert.detail.isEmpty {
+                    Text(alert.detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+            if alert.pid != nil {
+                Image(systemName: "arrow.up.forward").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(.top, notchHeight + 4)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 10)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
+    }
+
+    private var icon: String {
+        switch alert.kind {
+        case .finished: return "checkmark.circle.fill"
+        case .waiting: return "hand.raised.fill"
+        case .limit: return "gauge.with.dots.needle.67percent"
+        }
+    }
+
+    private var color: Color {
+        switch alert.kind {
+        case .finished: return .green
+        case .waiting: return .orange
+        case .limit: return .yellow
+        }
+    }
+}
+
+private struct SessionsSection: View {
+    let sessions: [AgentSession]
+    let onTap: (Int32) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Sessions").font(.callout.weight(.semibold))
+            ForEach(sessions) { session in
+                SessionRow(session: session)
+                    .contentShape(Rectangle())
+                    .onTapGesture { onTap(session.pid) }
+                    .help("Bring its terminal to the front")
+            }
+        }
+    }
+}
+
+private struct SessionRow: View {
+    let session: AgentSession
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+                .opacity(session.state == .working ? 0.9 : 1)
+            Text(SessionsModel.agentName(session.agent))
+                .foregroundStyle(.secondary)
+                .frame(width: 70, alignment: .leading)
+            Text(SessionsModel.label(session))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 4)
+            Text(stateText)
+                .foregroundStyle(stateColor)
+                .lineLimit(1)
+        }
+        .font(.caption)
+    }
+
+    private var color: Color {
+        switch session.state {
+        case .working: return .green
+        case .waiting: return .orange
+        case .idle: return .gray
+        case .running: return .blue
+        }
+    }
+
+    private var stateColor: Color {
+        if case .waiting = session.state { return .orange }
+        return .secondary
+    }
+
+    private var stateText: String {
+        let elapsed = session.since.map { " · " + Self.elapsed(since: $0) } ?? ""
+        switch session.state {
+        case .working: return "working" + elapsed
+        case .waiting(let reason): return (reason.map { "waiting: \($0)" } ?? "waiting for you") + elapsed
+        case .idle: return "idle"
+        case .running: return "running"
+        }
+    }
+
+    static func elapsed(since date: Date) -> String {
+        let seconds = max(0, Int(Date().timeIntervalSince(date)))
+        if seconds < 60 { return "\(seconds)s" }
+        if seconds < 3600 { return "\(seconds / 60)m" }
+        return "\(seconds / 3600)h \(seconds % 3600 / 60)m"
     }
 }
 
