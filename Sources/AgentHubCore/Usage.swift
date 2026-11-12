@@ -140,14 +140,14 @@ public struct UsageReader: Sendable {
     public func antigravity() async -> AgentUsage {
         var usage = AgentUsage(id: .antigravity, name: "Antigravity")
         let keyring = AntigravityKeyring()
-        guard var credential = try? keyring.read() else {
+        guard var credential = try? keyring.readCredential() else {
             usage.note = "agy is not signed in."
             return usage
         }
         usage.account = credential.email
         if credential.isExpired, runner.which("agy") != nil {
             _ = try? runner.run("agy", ["models"])
-            credential = (try? keyring.read()) ?? credential
+            credential = (try? keyring.readCredential()) ?? credential
         }
         guard let token = credential.accessToken, !credential.isExpired else {
             usage.note = "agy's sign-in has expired. Start agy once and it renews it."

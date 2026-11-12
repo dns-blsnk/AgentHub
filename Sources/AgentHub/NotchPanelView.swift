@@ -299,26 +299,24 @@ private struct Bar: View {
 
 private struct QuickActions: View {
     let actions: NotchActions
-    @Environment(AccountsModel.self) private var accounts
+    @Environment(AllAccounts.self) private var accounts
 
     var body: some View {
         HStack(spacing: 8) {
-            if !accounts.accounts.isEmpty {
+            let withAccounts = accounts.models.filter { !$0.accounts.isEmpty }
+            if !withAccounts.isEmpty {
                 Menu {
-                    ForEach(accounts.accounts) { account in
-                        Toggle(account.email, isOn: Binding(
-                            get: { account.email == accounts.activeEmail },
-                            set: { if $0 { Task { await accounts.switchTo(account) } } }
-                        ))
+                    ForEach(withAccounts) { model in
+                        Section(model.kind.name) {
+                            AccountToggles(model: model)
+                        }
                     }
                 } label: {
-                    Label(accounts.activeEmail ?? "Antigravity", systemImage: "person.crop.circle")
-                        .lineLimit(1)
+                    Label("Accounts", systemImage: "person.crop.circle")
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                .disabled(accounts.adding)
-                .help("Antigravity account")
+                .help("Switch the account of an agent")
             }
             Spacer()
             Button { actions.addServer() } label: {

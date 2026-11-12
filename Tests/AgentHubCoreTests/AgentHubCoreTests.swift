@@ -532,3 +532,70 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(ProcessTable.workingDirectory(me), FileManager.default.currentDirectoryPath)
     }
 }
+
+final class AccountSwitchTests: XCTestCase {
+    /// An in-memory slot standing in for an agent's Keychain item or file.
+    final class MemorySlot: SignInSlot, @unchecked Sendable {
+        var value: String?
+        var agent: AgentID { .codex }
+        func read() throws -> SignIn? { value.map { SignIn(raw: $0, email: $0.components(separatedBy: "|").first, authMethod: "test") } }
+        func write(_ raw: String) throws { value = raw }
+        func clear() throws { value = nil }
+    }
+
+    func testSwitchAddAndCancelKeepEverySignInSaved() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let service = "dev.agenthub.tests.\(UUID().uuidString)"
+        let store = AccountStore(metadataURL: dir.appendingPathComponent("accounts.json"), keychain: KeychainStore(service: service))
+        let slot = MemorySlot()
+        let switcher = AccountSwitcher(slot: slot, store: store)
+        defer {
+            for account in store.load() { store.keychain.delete(account.email) }
+            try? FileManager.default.removeItem(at: dir)
+        }
+
+        slot.value = "a@x|token1"
+        XCTAssertEqual(try switcher.captureCurrent()?.email, "a@x")
+
+        // Adding: the current sign-in is saved first, then the slot is cleared for the new login.
+        XCTAssertEqual(try switcher.beginAdding()?.email, "a@x")
+        XCTAssertNil(slot.value)
+        slot.value = "b@x|token2"  // the agent's own login wrote this
+        try switcher.captureCurrent()
+        XCTAssertEqual(store.load().map(\.email).sorted(), ["a@x", "b@x"])
+
+        // The agent refreshed its token in place; switching away re-saves it before swapping.
+        slot.value = "b@x|token2-refreshed"
+        try switcher.switchTo("a@x")
+        XCTAssertEqual(slot.value, "a@x|token1")
+        XCTAssertEqual(store.savedSignIn(for: "b@x"), "b@x|token2-refreshed")
+        XCTAssertThrowsError(try switcher.switchTo("nobody@x"))
+        XCTAssertEqual(try mode(store.metadataURL), 0o600)
+    }
+
+    func testCodexAuthSlotIdentityAndPermissions() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let slot = CodexAuthSlot(home: home)
+        XCTAssertNil(try slot.read())
+
+        try slot.write(#"{"auth_mode":"apikey","OPENAI_API_KEY":"sk-proj-abcdWXYZ"}"#)
+        XCTAssertEqual(try slot.read()?.email, "API key ••••WXYZ")
+        XCTAssertEqual(try mode(slot.url), 0o600)
+
+        // ChatGPT sign-in: the email comes from the id token's claims.
+        let claims = Data(#"{"email":"me@example.com"}"#.utf8).base64EncodedString()
+            .replacingOccurrences(of: "=", with: "").replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+        try slot.write(#"{"auth_mode":"chatgpt","tokens":{"id_token":"h.\#(claims).s","access_token":"a"}}"#)
+        XCTAssertEqual(try slot.read()?.email, "me@example.com")
+        XCTAssertEqual(try slot.read()?.authMethod, "chatgpt")
+
+        XCTAssertThrowsError(try slot.write("not json"))
+        try slot.clear()
+        XCTAssertNil(try slot.read())
+    }
+
+    private func mode(_ url: URL) throws -> Int {
+        try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as! Int
+    }
+}

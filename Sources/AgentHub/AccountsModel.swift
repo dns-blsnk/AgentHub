@@ -3,52 +3,95 @@ import AppKit
 import Foundation
 import Observation
 
-/// Antigravity CLI accounts: which one `agy` uses now, the saved ones, and the "add account" flow.
+/// What differs between agents whose accounts AgentHub switches.
+struct AccountKind: Sendable {
+    let agent: AgentID
+    let name: String
+    /// The CLI and its login arguments, run in Terminal by "Add Account".
+    let tool: String
+    let loginArguments: [String]
+    let slot: any SignInSlot
+    let store: AccountStore
+    /// Agents that rewrite their sign-in while running (token refresh, state file on exit) would undo a switch.
+    let blocksWhileRunning: Bool
+
+    static let antigravity = AccountKind(agent: .antigravity, name: "Antigravity", tool: "agy", loginArguments: [],
+                                         slot: AntigravityKeyring(), store: .antigravity(), blocksWhileRunning: false)
+    static let claude = AccountKind(agent: .claude, name: "Claude Code", tool: "claude", loginArguments: ["auth", "login"],
+                                    slot: ClaudeSignInSlot(), store: .claude(), blocksWhileRunning: true)
+    static let codex = AccountKind(agent: .codex, name: "Codex", tool: "codex", loginArguments: ["login"],
+                                   slot: CodexAuthSlot(), store: .codex(), blocksWhileRunning: true)
+}
+
+/// The accounts of every agent AgentHub can switch, in display order.
 @MainActor
 @Observable
-final class AccountsModel {
-    var accounts: [AntigravityAccount] = []
+final class AllAccounts {
+    let models: [AccountsModel]
+
+    init(_ models: [AccountsModel]) { self.models = models }
+
+    static func live() -> AllAccounts { AllAccounts([AccountsModel(.claude), AccountsModel(.codex), AccountsModel(.antigravity)]) }
+    static func preview() -> AllAccounts { AllAccounts([AccountsModel.preview(.claude), AccountsModel.preview(.antigravity)]) }
+
+    func model(for agent: AgentID) -> AccountsModel? { models.first { $0.kind.agent == agent } }
+}
+
+/// One agent's accounts: which one is in use, the saved ones, and the "add account" flow.
+@MainActor
+@Observable
+final class AccountsModel: Identifiable {
+    let kind: AccountKind
+    var accounts: [SavedAccount] = []
     var activeEmail: String?
-    /// `agy` processes running right now; they keep the old account until restarted.
+    /// Sessions of this agent running right now.
     var runningSessions = 0
     var adding = false
     var busy = false
     var message: String?
 
-    private let switcher = AntigravityAccountSwitcher(store: AntigravityAccountStore(metadataURL: AppPaths.antigravityAccounts))
+    nonisolated var id: AgentID { kind.agent }
+
+    private let switcher: AccountSwitcher
     private var previousEmail: String?
     private var pollTask: Task<Void, Never>?
     private var isPreview = false
 
-    init() {
+    init(_ kind: AccountKind) {
+        self.kind = kind
+        switcher = AccountSwitcher(slot: kind.slot, store: kind.store)
         Task { await refresh() }
     }
 
-    private init(preview: Void) {
+    private init(preview kind: AccountKind) {
+        self.kind = kind
+        switcher = AccountSwitcher(slot: kind.slot, store: kind.store)
         isPreview = true
         accounts = [
-            AntigravityAccount(email: "me@example.com", authMethod: "consumer", addedAt: .now, lastUsedAt: .now),
-            AntigravityAccount(email: "work@example.com", authMethod: "consumer", addedAt: .now.addingTimeInterval(-86_400), lastUsedAt: nil),
+            SavedAccount(email: "me@example.com", authMethod: "pro", addedAt: .now, lastUsedAt: .now),
+            SavedAccount(email: "work@example.com", authMethod: "max", addedAt: .now.addingTimeInterval(-86_400), lastUsedAt: nil),
         ]
         activeEmail = "me@example.com"
         runningSessions = 1
     }
 
-    static func preview() -> AccountsModel { AccountsModel(preview: ()) }
+    static func preview(_ kind: AccountKind) -> AccountsModel { AccountsModel(preview: kind) }
 
-    /// Re-reads agy's current sign-in and saves it, so the account in use is always in the list.
+    /// Re-reads the agent's current sign-in and saves it, so the account in use is always in the list.
     func refresh() async {
         guard !isPreview else { return }
         let switcher = self.switcher
-        let result = await Task.detached { () -> Result<(String?, [AntigravityAccount], Int), Error> in
+        let agent = kind.agent
+        let result = await Task.detached { () -> Result<(String?, [SavedAccount], Int), Error> in
             Result {
                 let current = try switcher.captureCurrent()
-                return (current?.email, switcher.store.load(), Self.countAgyProcesses())
+                return (current?.email, switcher.store.load(), Self.runningSessions(of: agent))
             }
         }.value
         switch result {
         case .success(let (email, accounts, sessions)):
-            activeEmail = email
+            // While adding, the slot is empty on purpose; don't report the previous account as active.
+            if !adding { activeEmail = email }
             self.accounts = accounts.sorted { $0.addedAt < $1.addedAt }
             runningSessions = sessions
         case .failure(let error):
@@ -56,25 +99,27 @@ final class AccountsModel {
         }
     }
 
-    func switchTo(_ account: AntigravityAccount) async {
-        // While adding, agy is signed out on purpose and the poll waits for the new sign-in.
+    func switchTo(_ account: SavedAccount) async {
+        // While adding, the agent is signed out on purpose and the poll waits for the new sign-in.
         guard !isPreview, !adding, account.email != activeEmail else { return }
+        guard await allowedToChange() else { return }
         await perform { try $0.switchTo(account.email) }
         if message == nil && runningSessions > 0 {
-            message = "Switched to \(account.email). \(runningSessions) running agy session(s) still use the previous account until restarted."
+            message = "Switched to \(account.email). \(runningSessions) running \(kind.name) session(s) still use the previous account until restarted."
         }
     }
 
     /// Only inactive accounts: the active one would be re-saved by the next refresh anyway.
-    func forget(_ account: AntigravityAccount) async {
+    func forget(_ account: SavedAccount) async {
         guard !isPreview, account.email != activeEmail else { return }
         await perform { try $0.store.forget(account.email) }
     }
 
-    /// Signs agy out (after saving the current account) and opens Terminal with `agy` to sign in.
-    /// The new sign-in is picked up from the Keychain as soon as it appears.
+    /// Clears the agent's sign-in (after saving the current account) and opens Terminal with the agent's login.
+    /// The new sign-in is picked up as soon as it appears.
     func startAdding() async {
         guard !isPreview, !adding else { return }
+        guard await allowedToChange() else { return }
         let switcher = self.switcher
         let result = await Task.detached { Result { try switcher.beginAdding() } }.value
         switch result {
@@ -100,46 +145,59 @@ final class AccountsModel {
         previousEmail = nil
     }
 
+    /// Claude Code and Codex rewrite their sign-in while they run, so changing it under them is refused.
+    private func allowedToChange() async -> Bool {
+        guard kind.blocksWhileRunning else { return true }
+        let agent = kind.agent
+        let running = await Task.detached { Self.runningSessions(of: agent) }.value
+        runningSessions = running
+        guard running == 0 else {
+            message = AccountError.sessionsRunning(kind.name, running).localizedDescription
+            return false
+        }
+        return true
+    }
+
     private func pollForSignIn() {
         pollTask?.cancel()
-        let keyring = switcher.keyring
+        let slot = kind.slot
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
-                let credential = await Task.detached { try? keyring.read() }.value
-                guard let credential, credential.email != nil else { continue }
+                let signIn = await Task.detached { try? slot.read() }.value
+                guard let signIn, signIn.email != nil else { continue }
                 guard let self else { return }
                 self.adding = false
                 self.previousEmail = nil
                 await self.refresh()
-                self.message = "Added \(credential.email ?? "account"). You can close the Terminal window."
+                self.message = "Added \(signIn.email ?? "account"). You can close the Terminal window."
                 return
             }
         }
     }
 
     private func openSignInTerminal() {
-        let agy = Self.runner.which("agy")?.path ?? "agy"
-        let script = AppPaths.support.appendingPathComponent("antigravity-sign-in.command")
+        let tool = Self.runner.which(kind.tool)?.path ?? kind.tool
+        let script = AppPaths.support.appendingPathComponent("\(kind.agent.rawValue)-sign-in.command")
         let body = """
         #!/bin/zsh -l
-        echo "AgentHub: sign in to Antigravity with the account you want to add."
+        echo "AgentHub: sign in to \(kind.name) with the account you want to add."
         echo "AgentHub picks it up automatically; close this window afterwards."
         echo
-        exec \(CommandLineParser.join([agy]))
+        exec \(CommandLineParser.join([tool] + kind.loginArguments))
 
         """
         do {
             try PrivateFiles.makeDirectory(AppPaths.support)
             try body.write(to: script, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
             NSWorkspace.shared.open(script)
         } catch {
-            message = "Couldn't open Terminal: \(error.localizedDescription). Run `agy` yourself to sign in."
+            message = "Couldn't open Terminal: \(error.localizedDescription). Run `\(([kind.tool] + kind.loginArguments).joined(separator: " "))` yourself to sign in."
         }
     }
 
-    private func perform(_ action: @escaping @Sendable (AntigravityAccountSwitcher) throws -> Void) async {
+    private func perform(_ action: @escaping @Sendable (AccountSwitcher) throws -> Void) async {
         busy = true
         let switcher = self.switcher
         let result = await Task.detached { Result { try action(switcher) } }.value
@@ -155,8 +213,7 @@ final class AccountsModel {
     /// Detected once (a login shell is slow); the first `refresh()` warms it up off the main thread.
     nonisolated private static let runner = CommandRunner.detect()
 
-    nonisolated private static func countAgyProcesses() -> Int {
-        let output = (try? runner.run("pgrep", ["-x", "agy"])) ?? ""
-        return output.split(separator: "\n").count
+    nonisolated private static func runningSessions(of agent: AgentID) -> Int {
+        SessionScanner().scan().filter { $0.agent == agent }.count
     }
 }
