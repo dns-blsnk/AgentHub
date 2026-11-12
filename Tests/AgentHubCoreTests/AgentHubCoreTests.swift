@@ -492,3 +492,43 @@ final class SecurityTests: XCTestCase {
         try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as! Int
     }
 }
+
+final class SessionTests: XCTestCase {
+    func testClaudeSessionFile() {
+        let waiting = SessionScanner.claudeSession(from: ["pid": 42, "cwd": "/w/app", "name": "fix-login", "status": "waiting",
+                                                          "waitingFor": "permission", "statusUpdatedAt": 1_794_435_501_000])
+        XCTAssertEqual(waiting?.state, .waiting(reason: "permission"))
+        XCTAssertEqual(waiting?.project, "app")
+        XCTAssertEqual(waiting?.since, Date(timeIntervalSince1970: 1_794_435_501))
+        XCTAssertEqual(SessionScanner.claudeSession(from: ["pid": 1, "status": "busy"])?.state, .working)
+        XCTAssertEqual(SessionScanner.claudeSession(from: ["pid": 1, "status": "new-thing"])?.state, .running)
+        XCTAssertNil(SessionScanner.claudeSession(from: ["status": "idle"]))
+    }
+
+    func testOnlyLiveClaudeSessionsAreListed() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let dir = home.appendingPathComponent(".claude/sessions")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let me = ProcessInfo.processInfo.processIdentifier
+        try Data(#"{"pid":\#(me),"status":"idle","cwd":"/x"}"#.utf8).write(to: dir.appendingPathComponent("\(me).json"))
+        try Data(#"{"pid":999999,"status":"busy"}"#.utf8).write(to: dir.appendingPathComponent("999999.json"))
+        XCTAssertEqual(SessionScanner(home: home).claudeSessions().map(\.pid), [me])
+    }
+
+    func testCodexTurnStateFromRolloutTail() {
+        let started = #"{"type":"event_msg","payload":{"type":"task_started"}}"#
+        let item = #"{"type":"response_item","payload":{"type":"reasoning"}}"#
+        let done = #"{"type":"event_msg","payload":{"type":"task_complete"}}"#
+        XCTAssertEqual(SessionScanner.codexState(fromTail: [done, started, item].joined(separator: "\n")), .working)
+        XCTAssertEqual(SessionScanner.codexState(fromTail: [started, item, done].joined(separator: "\n")), .idle)
+        XCTAssertEqual(SessionScanner.codexState(fromTail: item), .idle)
+    }
+
+    func testProcessTableSeesItself() {
+        let me = ProcessInfo.processInfo.processIdentifier
+        XCTAssertTrue(ProcessTable.isAlive(me))
+        XCTAssertEqual(ProcessTable.ancestry(of: me).first, me)
+        XCTAssertEqual(ProcessTable.workingDirectory(me), FileManager.default.currentDirectoryPath)
+    }
+}

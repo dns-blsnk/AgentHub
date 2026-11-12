@@ -10,6 +10,10 @@ final class UsageModel {
     var loading = false
     var lastRefresh: Date?
 
+    /// Called when a limit window crosses `alertThreshold` between two reads.
+    @ObservationIgnored var onThreshold: (AgentUsage, UsageWindow) -> Void = { _, _ in }
+    static let alertThreshold = 0.8
+
     /// The sources are rate-limited services; once every five minutes is plenty for a menu bar glance.
     private static let interval: Duration = .seconds(300)
     private var isPreview = false
@@ -53,9 +57,23 @@ final class UsageModel {
     func refresh() async {
         guard !isPreview, !loading else { return }
         loading = true
-        usages = await Task.detached { await UsageReader(runner: CommandRunner.detect()).readAll() }.value
+        let fresh = await Task.detached { await UsageReader(runner: CommandRunner.detect()).readAll() }.value
+        // The first read only sets the baseline, so launching near a limit doesn't alert every time.
+        if lastRefresh != nil { reportCrossings(from: usages, to: fresh) }
+        usages = fresh
         lastRefresh = Date()
         loading = false
+    }
+
+    private func reportCrossings(from old: [AgentUsage], to new: [AgentUsage]) {
+        for usage in new {
+            let before = old.first { $0.id == usage.id }
+            for window in usage.windows {
+                guard let used = window.usedFraction, used >= Self.alertThreshold else { continue }
+                let previous = before?.windows.first { $0.id == window.id }?.usedFraction ?? 0
+                if previous < Self.alertThreshold { onThreshold(usage, window) }
+            }
+        }
     }
 
     /// Short text for the menu bar, e.g. "Claude 5h 14% · week 47%".

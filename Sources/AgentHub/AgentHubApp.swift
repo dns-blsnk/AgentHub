@@ -33,15 +33,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let usage = UsageModel()
     let windowState = WindowState()
     let loginItem = LoginItem()
+    let sessions = SessionsModel()
     private var notch: NotchController?
     private var mainWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         loginItem.enableOnFirstInstalledLaunch()
-        notch = NotchController(usage: usage, accounts: accounts, actions: NotchActions(
+        let notch = NotchController(usage: usage, accounts: accounts, sessions: sessions, actions: NotchActions(
             openMain: { [weak self] in self?.showMain() },
             addServer: { [weak self] in self?.showMain(addingServer: true) }
         ))
+        self.notch = notch
+        sessions.onAlert = { [weak notch] in notch?.show($0) }
+        sessions.onResolve = { [weak notch] in notch?.resolve($0) }
+        usage.onThreshold = { [weak notch] usage, window in
+            let percent = Int(((window.usedFraction ?? 0) * 100).rounded())
+            notch?.show(IslandAlert(id: "limit-\(usage.id.rawValue)-\(window.id)", kind: .limit, agent: usage.id,
+                                    title: "\(usage.name): \(window.label) at \(percent)%", detail: "Close to the limit",
+                                    pid: nil, persistent: false))
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

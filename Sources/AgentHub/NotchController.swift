@@ -58,6 +58,7 @@ private final class HoverView: NSView {
 }
 
 /// Hovering the notch for a moment drops the panel down from it; moving the cursor away puts it back.
+/// On its own the notch also shows short alerts (a session finished or waiting, a limit close to running out).
 @MainActor
 final class NotchController {
     private let trigger = NotchPanel()
@@ -67,13 +68,16 @@ final class NotchController {
     private var hoverTask: Task<Void, Never>?
     private var watchTimer: Timer?
     private var outsideSince: Date?
+    /// Alerts in arrival order; the newest is shown. Persistent ones stay until resolved.
+    private var alerts: [IslandAlert] = []
+    private static let alertDuration: Duration = .seconds(6)
 
     /// How long the cursor rests on the notch before the panel opens, and how long it may be away before it closes.
     private static let openDelay: Duration = .milliseconds(150)
     private static let closeDelay: TimeInterval = 0.35
     static let panelWidth: CGFloat = 440
 
-    init(usage: UsageModel, accounts: AccountsModel, actions: NotchActions) {
+    init(usage: UsageModel, accounts: AccountsModel, sessions: SessionsModel, actions: NotchActions) {
         let hover = HoverView()
         hover.onEnter = { [weak self] in self?.cursorEnteredZone() }
         trigger.contentView = hover
@@ -84,8 +88,18 @@ final class NotchController {
         }
         .environment(usage)
         .environment(accounts)
+        .environment(sessions)
         panel.contentView = NSHostingView(rootView: root)
         state.onOpen = { Task { await usage.refresh(ifOlderThan: 30) } }
+        state.onPillHover = { [weak self] in self?.cursorEnteredZone() }
+        state.onPillTap = { [weak self] alert in
+            if let pid = alert.pid { sessions.focus(pid: pid) }
+            self?.resolve(alert.id)
+        }
+        state.onSessionTap = { [weak self] pid in
+            sessions.focus(pid: pid)
+            self?.dismiss()
+        }
 
         layout()
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
@@ -114,7 +128,40 @@ final class NotchController {
         hoverTask = Task { [weak self] in
             try? await Task.sleep(for: Self.openDelay)
             guard let self, !Task.isCancelled, let geometry = self.geometry else { return }
-            if geometry.zone.insetBy(dx: -12, dy: -2).contains(NSEvent.mouseLocation) { self.open() }
+            let mouse = NSEvent.mouseLocation
+            // The alert pill is wider than the notch; resting on it opens the panel too.
+            let onPill = self.state.alert != nil && self.panel.isVisible && self.panel.frame.contains(mouse)
+            if geometry.zone.insetBy(dx: -12, dy: -2).contains(mouse) || onPill { self.open() }
+        }
+    }
+
+    // MARK: Alerts
+
+    func show(_ alert: IslandAlert) {
+        alerts.removeAll { $0.id == alert.id }
+        alerts.append(alert)
+        withAnimation(.spring(duration: 0.35, bounce: 0.25)) { state.alert = alert }
+        if !state.expanded { panel.orderFrontRegardless() }
+        if !alert.persistent {
+            Task { [weak self] in
+                try? await Task.sleep(for: Self.alertDuration)
+                self?.resolve(alert.id)
+            }
+        }
+    }
+
+    func resolve(_ id: String) {
+        guard alerts.contains(where: { $0.id == id }) else { return }
+        alerts.removeAll { $0.id == id }
+        withAnimation(.easeInOut(duration: 0.2)) { state.alert = alerts.last }
+        if alerts.isEmpty && !state.expanded { hideWhenCollapsed() }
+    }
+
+    private func hideWhenCollapsed() {
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(220))
+            guard let self, !self.state.expanded, self.state.alert == nil else { return }
+            self.panel.orderOut(nil)
         }
     }
 
@@ -134,11 +181,8 @@ final class NotchController {
         watchTimer = nil
         outsideSince = nil
         withAnimation(.easeIn(duration: 0.18)) { state.expanded = false }
-        Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(200))
-            guard let self, !self.state.expanded else { return }
-            self.panel.orderOut(nil)
-        }
+        // A pending alert keeps the panel up as a pill.
+        hideWhenCollapsed()
     }
 
     /// Polls the cursor while open. The timer runs in the default run loop mode only, so it pauses while a menu
@@ -186,7 +230,11 @@ final class NotchState {
     var notchWidth: CGFloat = 200
     var notchHeight: CGFloat = 32
     var hasNotch = true
+    var alert: IslandAlert?
     @ObservationIgnored var onOpen: () -> Void = {}
+    @ObservationIgnored var onPillHover: () -> Void = {}
+    @ObservationIgnored var onPillTap: (IslandAlert) -> Void = { _ in }
+    @ObservationIgnored var onSessionTap: (Int32) -> Void = { _ in }
 }
 
 /// Buttons in the panel that reach outside it.
