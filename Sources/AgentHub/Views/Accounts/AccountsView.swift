@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Saved accounts of every agent AgentHub switches, with switch / add / forget.
 struct AccountsView: View {
-    @Environment(AllAccounts.self) private var all
+    @Environment(AccountsStore.self) private var accounts
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -14,7 +14,7 @@ struct AccountsView: View {
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button { Task { for model in all.models { await model.refresh() } } } label: {
+                Button { Task { await accounts.refreshAll() } } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .help("Re-read the current sign-ins")
@@ -24,67 +24,68 @@ struct AccountsView: View {
 
             ScrollView {
                 VStack(spacing: 14) {
-                    ForEach(all.models) { model in
-                        AccountsSection(model: model)
+                    ForEach(accounts.agents) { agent in
+                        AccountsSection(agent: agent)
                     }
                 }
                 .padding(16)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .onAppear { Task { for model in all.models { await model.refresh() } } }
+        .onAppear { Task { await accounts.refreshAll() } }
     }
 }
 
 private struct AccountsSection: View {
-    let model: AccountsModel
+    let agent: AgentAccounts
+    @Environment(AccountsStore.self) private var accounts
     @State private var forgetting: SavedAccount?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(model.kind.name).font(.title3.weight(.semibold))
-                if model.runningSessions > 0 {
-                    Text("\(model.runningSessions) running").font(.caption).foregroundStyle(.secondary)
+                Text(agent.name).font(.title3.weight(.semibold))
+                if agent.runningSessions > 0 {
+                    Text("\(agent.runningSessions) running").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if model.busy { ProgressView().controlSize(.small) }
-                Button("Add Account…") { Task { await model.startAdding() } }
-                    .disabled(model.adding || model.busy)
+                if agent.busy { ProgressView().controlSize(.small) }
+                Button("Add Account…") { Task { await accounts.startAdding(for: agent.id) } }
+                    .disabled(agent.adding || agent.busy)
             }
 
-            if model.adding {
-                AddingBanner(model: model)
+            if agent.adding {
+                AddingBanner(agent: agent)
             }
 
-            if model.accounts.isEmpty && !model.adding {
-                Text("No accounts yet. Sign in to \(model.kind.name) once, or press Add Account.")
+            if agent.accounts.isEmpty && !agent.adding {
+                Text("No accounts yet. Sign in to \(agent.name) once, or press Add Account.")
                     .font(.callout).foregroundStyle(.secondary)
             }
-            ForEach(model.accounts) { account in
-                AccountRow(model: model, account: account, forgetting: $forgetting)
-                if account.id != model.accounts.last?.id { Divider() }
+            ForEach(agent.accounts) { account in
+                AccountRow(agent: agent, account: account, forgetting: $forgetting)
+                if account.id != agent.accounts.last?.id { Divider() }
             }
 
-            if let message = model.message {
+            if let message = agent.message {
                 HStack(alignment: .top) {
                     Image(systemName: "info.circle").foregroundStyle(.secondary)
                     Text(message).textSelection(.enabled)
                     Spacer()
-                    Button("Dismiss") { model.message = nil }.buttonStyle(.borderless)
+                    Button("Dismiss") { accounts.dismissMessage(for: agent.id) }.buttonStyle(.borderless)
                 }
                 .font(.callout)
             }
         }
         .padding(14)
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
-        .disabled(model.busy)
+        .disabled(agent.busy)
         .confirmationDialog(
             "Forget \(forgetting?.email ?? "")?",
             isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }),
             presenting: forgetting
         ) { account in
-            Button("Forget", role: .destructive) { Task { await model.forget(account) } }
+            Button("Forget", role: .destructive) { Task { await accounts.forget(account, for: agent.id) } }
         } message: { account in
             Text("AgentHub deletes its saved copy of \(account.email). To use it again you'll have to sign in again.")
         }
@@ -92,12 +93,13 @@ private struct AccountsSection: View {
 }
 
 private struct AccountRow: View {
-    let model: AccountsModel
+    let agent: AgentAccounts
     let account: SavedAccount
     @Binding var forgetting: SavedAccount?
+    @Environment(AccountsStore.self) private var accounts
 
     var body: some View {
-        let active = account.email == model.activeEmail
+        let active = account.email == agent.activeEmail
         HStack(spacing: 10) {
             Image(systemName: active ? "checkmark.circle.fill" : "person.crop.circle")
                 .foregroundStyle(active ? .green : .secondary)
@@ -110,7 +112,7 @@ private struct AccountRow: View {
             if active {
                 Text("In use").font(.caption).foregroundStyle(.green)
             } else {
-                Button("Switch") { Task { await model.switchTo(account) } }
+                Button("Switch") { Task { await accounts.switchTo(account, for: agent.id) } }
             }
             Menu {
                 Button("Forget…", role: .destructive) { forgetting = account }
@@ -121,10 +123,10 @@ private struct AccountRow: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
         }
-        .disabled(model.adding)
+        .disabled(agent.adding)
         .padding(.vertical, 2)
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { Task { await model.switchTo(account) } }
+        .onTapGesture(count: 2) { Task { await accounts.switchTo(account, for: agent.id) } }
     }
 
     private var detail: String {
@@ -138,18 +140,19 @@ private struct AccountRow: View {
 }
 
 private struct AddingBanner: View {
-    let model: AccountsModel
+    let agent: AgentAccounts
+    @Environment(AccountsStore.self) private var accounts
 
     var body: some View {
         HStack(spacing: 10) {
             ProgressView().controlSize(.small)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Waiting for sign-in…").fontWeight(.medium)
-                Text("Sign in with the new account in the Terminal window that opened. It's added as soon as \(model.kind.name) saves it.")
+                Text("Sign in with the new account in the Terminal window that opened. It's added as soon as \(agent.name) saves it.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Cancel") { Task { await model.cancelAdding() } }
+            Button("Cancel") { Task { await accounts.cancelAdding(for: agent.id) } }
         }
         .padding(10)
         .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
@@ -158,6 +161,6 @@ private struct AddingBanner: View {
 
 #Preview {
     AccountsView()
-        .environment(AllAccounts.preview())
+        .environment(AccountsStore.preview())
         .frame(width: 720, height: 520)
 }

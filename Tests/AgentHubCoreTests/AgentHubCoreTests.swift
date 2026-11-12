@@ -546,9 +546,9 @@ final class AccountSwitchTests: XCTestCase {
     func testSwitchAddAndCancelKeepEverySignInSaved() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let service = "dev.agenthub.tests.\(UUID().uuidString)"
-        let store = AccountStore(metadataURL: dir.appendingPathComponent("accounts.json"), keychain: KeychainStore(service: service))
+        let store = AccountVault(metadataURL: dir.appendingPathComponent("accounts.json"), keychain: KeychainStore(service: service))
         let slot = MemorySlot()
-        let switcher = AccountSwitcher(slot: slot, store: store)
+        let switcher = AccountSwitcher(slot: slot, vault: store)
         defer {
             for account in store.load() { store.keychain.delete(account.email) }
             try? FileManager.default.removeItem(at: dir)

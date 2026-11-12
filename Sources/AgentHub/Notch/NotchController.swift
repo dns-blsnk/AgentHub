@@ -57,54 +57,45 @@ private final class HoverView: NSView {
     override func mouseEntered(with event: NSEvent) { onEnter() }
 }
 
-/// Hovering the notch for a moment drops the panel down from it; moving the cursor away puts it back.
-/// On its own the notch also shows short alerts (a session finished or waiting, a limit close to running out).
+/// The AppKit host of the notch: two borderless panels above the menu bar (the hover zone and the panel itself),
+/// the cursor tracking that opens and closes it, and the panel window following `NotchStore`.
+/// All state lives in the store; this only turns it into windows.
 @MainActor
 final class NotchController {
     private let trigger = NotchPanel()
     private let panel = NotchPanel()
-    private let state = NotchState()
+    private let store: NotchStore
     private var geometry: NotchGeometry?
     private var hoverTask: Task<Void, Never>?
     private var watchTimer: Timer?
     private var outsideSince: Date?
-    /// Alerts in arrival order; the newest is shown. Persistent ones stay until resolved.
-    private var alerts: [IslandAlert] = []
-    private static let alertDuration: Duration = .seconds(6)
 
     /// How long the cursor rests on the notch before the panel opens, and how long it may be away before it closes.
     private static let openDelay: Duration = .milliseconds(150)
     private static let closeDelay: TimeInterval = 0.35
     static let panelWidth: CGFloat = 440
 
-    init(usage: UsageModel, accounts: AllAccounts, sessions: SessionsModel, actions: NotchActions) {
+    /// `content` is the panel's SwiftUI view with its environment already set; its size sizes the window.
+    init<Content: View>(store: NotchStore, content: (_ onSize: @escaping (CGSize) -> Void) -> Content) {
+        self.store = store
         let hover = HoverView()
         hover.onEnter = { [weak self] in self?.cursorEnteredZone() }
         trigger.contentView = hover
         trigger.ignoresMouseEvents = false
 
-        let root = NotchPanelView(state: state, actions: actions) { [weak self] size in
-            self?.resizePanel(to: size)
-        }
-        .environment(usage)
-        .environment(accounts)
-        .environment(sessions)
-        panel.contentView = NSHostingView(rootView: root)
-        state.onOpen = { Task { await usage.refresh(ifOlderThan: 30) } }
-        state.onPillHover = { [weak self] in self?.cursorEnteredZone() }
-        state.onPillTap = { [weak self] alert in
-            if let pid = alert.pid { sessions.focus(pid: pid) }
-            self?.resolve(alert.id)
-        }
-        state.onSessionTap = { [weak self] pid in
-            sessions.focus(pid: pid)
-            self?.dismiss()
-        }
+        panel.contentView = NSHostingView(rootView: content { [weak self] size in self?.resizePanel(to: size) })
+        store.onOpenRequest = { [weak self] in self?.cursorEnteredZone() }
 
         layout()
+        followVisibility()
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.layout() }
         }
+    }
+
+    /// Closes the panel right away, e.g. before the main window opens.
+    func dismiss() {
+        if store.expanded { close() }
     }
 
     private func layout() {
@@ -116,63 +107,48 @@ final class NotchController {
         // A few points wider than the notch, so the cursor finds it easily.
         trigger.setFrame(geometry.zone.insetBy(dx: -12, dy: 0), display: false)
         trigger.orderFrontRegardless()
-        state.notchWidth = geometry.zone.width
-        state.notchHeight = geometry.zone.height
-        state.hasNotch = geometry.hasNotch
-        if state.expanded { resizePanel(to: panel.frame.size) }
+        store.notchWidth = geometry.zone.width
+        store.notchHeight = geometry.zone.height
+        store.hasNotch = geometry.hasNotch
+        // Until SwiftUI has laid the panel out once it reports no size; start it at the notch's,
+        // so the first open shows a real window that then grows to the content.
+        resizePanel(to: panel.frame.size == .zero ? geometry.zone.size : panel.frame.size)
+    }
+
+    /// Shows the panel window while the store has something to draw, and takes it down a moment after
+    /// (so the collapse animation can finish).
+    private func followVisibility() {
+        withObservationTracking {
+            _ = store.isVisible
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if self.store.isVisible {
+                    self.panel.orderFrontRegardless()
+                } else {
+                    try? await Task.sleep(for: .milliseconds(220))
+                    if !self.store.isVisible { self.panel.orderOut(nil) }
+                }
+                self.followVisibility()
+            }
+        }
     }
 
     private func cursorEnteredZone() {
-        guard !state.expanded else { return }
+        guard !store.expanded else { return }
         hoverTask?.cancel()
         hoverTask = Task { [weak self] in
             try? await Task.sleep(for: Self.openDelay)
             guard let self, !Task.isCancelled, let geometry = self.geometry else { return }
             let mouse = NSEvent.mouseLocation
             // The alert pill is wider than the notch; resting on it opens the panel too.
-            let onPill = self.state.alert != nil && self.panel.isVisible && self.panel.frame.contains(mouse)
+            let onPill = self.store.alert != nil && self.panel.isVisible && self.panel.frame.contains(mouse)
             if geometry.zone.insetBy(dx: -12, dy: -2).contains(mouse) || onPill { self.open() }
         }
     }
 
-    // MARK: Alerts
-
-    func show(_ alert: IslandAlert) {
-        alerts.removeAll { $0.id == alert.id }
-        alerts.append(alert)
-        withAnimation(.spring(duration: 0.35, bounce: 0.25)) { state.alert = alert }
-        if !state.expanded { panel.orderFrontRegardless() }
-        if !alert.persistent {
-            Task { [weak self] in
-                try? await Task.sleep(for: Self.alertDuration)
-                self?.resolve(alert.id)
-            }
-        }
-    }
-
-    func resolve(_ id: String) {
-        guard alerts.contains(where: { $0.id == id }) else { return }
-        alerts.removeAll { $0.id == id }
-        withAnimation(.easeInOut(duration: 0.2)) { state.alert = alerts.last }
-        if alerts.isEmpty && !state.expanded { hideWhenCollapsed() }
-    }
-
-    private func hideWhenCollapsed() {
-        Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(220))
-            guard let self, !self.state.expanded, self.state.alert == nil else { return }
-            self.panel.orderOut(nil)
-        }
-    }
-
     private func open() {
-        guard let geometry else { return }
-        if panel.frame.size == .zero {
-            resizePanel(to: CGSize(width: Self.panelWidth, height: geometry.zone.height + 200))
-        }
-        panel.orderFrontRegardless()
-        withAnimation(.spring(duration: 0.3, bounce: 0.15)) { state.expanded = true }
-        state.onOpen()
+        store.expand()
         startWatching()
     }
 
@@ -180,9 +156,7 @@ final class NotchController {
         watchTimer?.invalidate()
         watchTimer = nil
         outsideSince = nil
-        withAnimation(.easeIn(duration: 0.18)) { state.expanded = false }
-        // A pending alert keeps the panel up as a pill.
-        hideWhenCollapsed()
+        store.collapse()
     }
 
     /// Polls the cursor while open. The timer runs in the default run loop mode only, so it pauses while a menu
@@ -197,6 +171,8 @@ final class NotchController {
     }
 
     private func checkCursor() {
+        // Collapsed from inside (a session row, "Open"): stop watching.
+        guard store.expanded else { return close() }
         let mouse = NSEvent.mouseLocation
         let inside = panel.frame.insetBy(dx: -8, dy: -8).contains(mouse) || trigger.frame.contains(mouse)
         if inside {
@@ -215,30 +191,4 @@ final class NotchController {
                            width: size.width, height: size.height)
         if panel.frame != frame { panel.setFrame(frame, display: true) }
     }
-
-    /// Closes the panel right away, e.g. before the main window opens.
-    func dismiss() {
-        if state.expanded { close() }
-    }
-}
-
-/// What the panel shows besides the data models.
-@MainActor
-@Observable
-final class NotchState {
-    var expanded = false
-    var notchWidth: CGFloat = 200
-    var notchHeight: CGFloat = 32
-    var hasNotch = true
-    var alert: IslandAlert?
-    @ObservationIgnored var onOpen: () -> Void = {}
-    @ObservationIgnored var onPillHover: () -> Void = {}
-    @ObservationIgnored var onPillTap: (IslandAlert) -> Void = { _ in }
-    @ObservationIgnored var onSessionTap: (Int32) -> Void = { _ in }
-}
-
-/// Buttons in the panel that reach outside it.
-struct NotchActions {
-    var openMain: @MainActor () -> Void
-    var addServer: @MainActor () -> Void
 }

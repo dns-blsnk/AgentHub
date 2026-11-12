@@ -2,23 +2,11 @@ import AgentHubCore
 import Foundation
 import Observation
 
-struct AgentStatus: Identifiable, Sendable {
-    let id: AgentID
-    let name: String
-    let installed: Bool
-    let configPath: String
-    let serverNames: [String]
-    let error: String?
-    var supportedTransports: Set<Transport> = [.stdio, .http]
-    /// Project-scope servers by name → project paths (with `~`), shown but never written.
-    var projectServers: [String: [String]] = [:]
-
-    func supports(_ transport: Transport) -> Bool { supportedTransports.contains(transport) }
-}
-
+/// MCP servers: the registry, what each agent has, and the actions that keep them in sync.
+/// The single source of truth for the "MCP Servers" tab, the server form and the import sheet.
 @MainActor
 @Observable
-final class AppModel {
+final class ServerStore {
     var servers: [MCPServer] = []
     var agents: [AgentStatus] = []
     /// Last sync errors per server and agent; cleared on the next successful sync.
@@ -58,35 +46,14 @@ final class AppModel {
         errors = [servers[1].id: [.cursor: "Sample error: ~/.cursor/mcp.json is not plain JSON"]]
     }
 
-    static func preview() -> AppModel { AppModel(preview: ()) }
+    static func preview() -> ServerStore { ServerStore(preview: ()) }
 
     var installedAgents: [AgentStatus] { agents.filter(\.installed) }
 
     func refreshAgents() async {
         guard !isPreview else { return }
         let (sync, statuses) = await Task.detached {
-            let runner = CommandRunner.detect()
-            let adapters = Agents.all(runner: runner)
-            let statuses = adapters.map { adapter -> AgentStatus in
-                let installed = adapter.isInstalled()
-                var names: [String] = []
-                var readError: String?
-                if installed {
-                    do { names = try adapter.serverNames() } catch { readError = error.localizedDescription }
-                }
-                return AgentStatus(
-                    id: adapter.id,
-                    name: adapter.displayName,
-                    installed: installed,
-                    configPath: adapter.configURL.path.replacingOccurrences(of: runner.home.path, with: "~"),
-                    serverNames: names,
-                    error: readError,
-                    supportedTransports: adapter.supportedTransports,
-                    projectServers: installed
-                        ? adapter.projectServers().mapValues { $0.map { $0.replacingOccurrences(of: runner.home.path, with: "~") } }
-                        : [:]
-                )
-            }
+            let (adapters, statuses) = Agents.detect(runner: CommandRunner.detect())
             return (MCPSync(adapters: adapters, snapshots: SnapshotStore(root: AppPaths.snapshots)), statuses)
         }.value
         self.sync = sync

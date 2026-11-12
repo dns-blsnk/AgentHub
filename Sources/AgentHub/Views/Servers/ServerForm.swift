@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Add or edit one MCP server: name, how to reach it, any number of keys, and which agents get it.
 struct ServerForm: View {
-    @Environment(AppModel.self) private var model
+    @Environment(ServerStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
     let original: MCPServer?
@@ -60,7 +60,7 @@ struct ServerForm: View {
                 }
 
                 Section {
-                    ForEach(model.agents) { agent in
+                    ForEach(store.agents) { agent in
                         VStack(alignment: .leading, spacing: 2) {
                             Toggle(agent.name, isOn: Binding(
                                 get: { agents.contains(agent.id) },
@@ -81,7 +81,7 @@ struct ServerForm: View {
                     HStack {
                         Text("Agents")
                         Spacer()
-                        Button("All") { agents = Set(model.installedAgents.filter { $0.supports(transport) }.map(\.id)) }
+                        Button("All") { agents = Set(store.installedAgents.filter { $0.supports(transport) }.map(\.id)) }
                         Button("None") { agents = [] }
                     }
                     .buttonStyle(.borderless)
@@ -109,7 +109,7 @@ struct ServerForm: View {
     }
 
     private var nameTaken: Bool {
-        model.servers.contains { $0.name == name && $0.id != original?.id }
+        store.servers.contains { $0.name == name && $0.id != original?.id }
     }
 
     private var isValid: Bool {
@@ -140,7 +140,7 @@ struct ServerForm: View {
     private func load() {
         guard let original else {
             // New servers go to every installed agent; untick the ones that shouldn't get it.
-            agents = Set(model.installedAgents.map(\.id))
+            agents = Set(store.installedAgents.map(\.id))
             keyRows = [KeyRow()]
             return
         }
@@ -148,7 +148,7 @@ struct ServerForm: View {
         transport = original.transport
         commandLine = CommandLineParser.join([original.command] + original.args)
         url = original.url
-        let values = model.keyValues(for: original)
+        let values = store.keyValues(for: original)
         keyRows = original.keys.map { KeyRow(name: $0, value: values[$0] ?? "") }
         if keyRows.isEmpty { keyRows = [KeyRow()] }
         agents = original.agents
@@ -163,14 +163,14 @@ struct ServerForm: View {
         server.args = transport == .stdio ? Array(argv.dropFirst()) : []
         server.url = transport == .http ? url.trimmingCharacters(in: .whitespaces) : ""
         server.keys = filledRows.map(\.trimmedName)
-        server.agents = agents.filter { id in model.agents.first { $0.id == id }?.supports(transport) ?? false }
+        server.agents = agents.filter { id in store.agents.first { $0.id == id }?.supports(transport) ?? false }
         let values = Dictionary(
             filledRows.map { ($0.trimmedName, $0.value.trimmingCharacters(in: .whitespacesAndNewlines)) },
             uniquingKeysWith: { _, last in last }
         )
         saving = true
         Task {
-            await model.save(server, values: values)
+            await store.save(server, values: values)
             saving = false
             dismiss()
         }
@@ -239,5 +239,5 @@ private struct KeyRowEditor: View {
 
 #Preview {
     ServerForm(original: nil)
-        .environment(AppModel.preview())
+        .environment(ServerStore.preview())
 }

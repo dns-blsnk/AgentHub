@@ -3,7 +3,7 @@ import SwiftUI
 
 /// One card per agent: each limit window as a bar with the time until it resets.
 struct UsageView: View {
-    @Environment(UsageModel.self) private var model
+    @Environment(UsageStore.self) private var usage
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -13,23 +13,23 @@ struct UsageView: View {
                     Text(subtitle).font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if model.loading { ProgressView().controlSize(.small) }
-                Button { Task { await model.refresh() } } label: {
+                if usage.loading { ProgressView().controlSize(.small) }
+                Button { Task { await usage.refresh() } } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .help("Read the limits again")
-                .disabled(model.loading)
+                .disabled(usage.loading)
             }
             .padding(16)
             Divider()
 
-            if model.usages.isEmpty {
+            if usage.usages.isEmpty {
                 ProgressView("Reading limits…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     VStack(spacing: 12) {
-                        ForEach(model.usages) { usage in
+                        ForEach(usage.usages) { usage in
                             UsageCard(usage: usage)
                         }
                         Text("These numbers come from the same undocumented sources the agents use themselves, so they may stop working after an agent update.")
@@ -45,7 +45,7 @@ struct UsageView: View {
     }
 
     private var subtitle: String {
-        guard let last = model.lastRefresh else { return "Reading what each agent reports…" }
+        guard let last = usage.lastRefresh else { return "Reading what each agent reports…" }
         return "Updated \(last.formatted(date: .omitted, time: .shortened)), every 5 minutes."
     }
 }
@@ -133,6 +133,6 @@ private struct WindowRow: View {
 
 #Preview {
     UsageView()
-        .environment(UsageModel.preview())
+        .environment(UsageStore.preview())
         .frame(width: 860, height: 560)
 }

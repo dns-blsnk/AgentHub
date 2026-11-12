@@ -56,8 +56,8 @@ public struct SavedAccount: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
-/// Saved accounts of one agent: metadata in a JSON file, each sign-in in AgentHub's own Keychain item.
-public struct AccountStore: Sendable {
+/// Saved sign-ins of one agent: metadata in a JSON file, each sign-in in AgentHub's own Keychain item.
+public struct AccountVault: Sendable {
     /// Refreshes run concurrently; serialize the load-modify-save of the metadata file.
     private static let lock = NSLock()
 
@@ -69,16 +69,16 @@ public struct AccountStore: Sendable {
         self.keychain = keychain
     }
 
-    public static func antigravity() -> AccountStore {
-        AccountStore(metadataURL: AppPaths.antigravityAccounts, keychain: KeychainStore(service: "dev.agenthub.antigravity"))
+    public static func antigravity() -> AccountVault {
+        AccountVault(metadataURL: AppPaths.antigravityAccounts, keychain: KeychainStore(service: "dev.agenthub.antigravity"))
     }
 
-    public static func codex() -> AccountStore {
-        AccountStore(metadataURL: AppPaths.support.appendingPathComponent("codex-accounts.json"), keychain: KeychainStore(service: "dev.agenthub.codex"))
+    public static func codex() -> AccountVault {
+        AccountVault(metadataURL: AppPaths.support.appendingPathComponent("codex-accounts.json"), keychain: KeychainStore(service: "dev.agenthub.codex"))
     }
 
-    public static func claude() -> AccountStore {
-        AccountStore(metadataURL: AppPaths.support.appendingPathComponent("claude-accounts.json"), keychain: KeychainStore(service: "dev.agenthub.claude"))
+    public static func claude() -> AccountVault {
+        AccountVault(metadataURL: AppPaths.support.appendingPathComponent("claude-accounts.json"), keychain: KeychainStore(service: "dev.agenthub.claude"))
     }
 
     public func load() -> [SavedAccount] {
@@ -129,18 +129,18 @@ public struct AccountStore: Sendable {
 /// Switching = putting another saved sign-in into the agent's slot.
 public struct AccountSwitcher: Sendable {
     public let slot: any SignInSlot
-    public let store: AccountStore
+    public let vault: AccountVault
 
-    public init(slot: any SignInSlot, store: AccountStore) {
+    public init(slot: any SignInSlot, vault: AccountVault) {
         self.slot = slot
-        self.store = store
+        self.vault = vault
     }
 
     /// Agents refresh their tokens in place, so whatever the slot has now is re-saved before anything else happens.
     @discardableResult
     public func captureCurrent() throws -> SavedAccount? {
         guard let signIn = try slot.read() else { return nil }
-        return try store.remember(signIn, markUsed: true)
+        return try vault.remember(signIn, markUsed: true)
     }
 
     public func switchTo(_ email: String) throws {
@@ -150,18 +150,18 @@ public struct AccountSwitcher: Sendable {
 
     /// Puts a saved sign-in back without capturing first (used to undo an abandoned "add account").
     public func activate(_ email: String) throws {
-        guard let raw = store.savedSignIn(for: email) else { throw AccountError.unknownAccount(email) }
+        guard let raw = vault.savedSignIn(for: email) else { throw AccountError.unknownAccount(email) }
         try slot.write(raw)
-        if let signIn = try slot.read() { try store.remember(signIn, markUsed: true) }
+        if let signIn = try slot.read() { try vault.remember(signIn, markUsed: true) }
     }
 
     /// Saves the current account and clears the slot, so the agent's next login starts fresh.
     /// Returns the account that was active, to restore if the user gives up.
     public func beginAdding() throws -> SavedAccount? {
         let current = try slot.read()
-        let previous = try current.flatMap { try store.remember($0, markUsed: true) }
+        let previous = try current.flatMap { try vault.remember($0, markUsed: true) }
         // Never sign out of an account that isn't safely saved first.
-        if let current, previous.map({ store.savedSignIn(for: $0.email) }) != current.raw {
+        if let current, previous.map({ vault.savedSignIn(for: $0.email) }) != current.raw {
             throw AccountError.unexpectedFormat
         }
         try slot.clear()
