@@ -46,7 +46,8 @@ public struct AntigravityKeyring: SignInSlot {
 
     public func readCredential() throws -> AntigravityCredential? {
         do {
-            let raw = try CommandRunner.runRaw("/usr/bin/security", ["find-generic-password", "-s", service, "-a", account, "-w"], environment: nil)
+            let raw = try CommandRunner.runRaw(
+                "/usr/bin/security", ["find-generic-password", "-s", service, "-a", account, "-w"], environment: nil)
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : AntigravityCredential(raw: trimmed)
         } catch let error as CommandError where error.status == 44 {

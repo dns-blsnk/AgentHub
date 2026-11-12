@@ -50,7 +50,9 @@ public struct ImportCandidate: Identifiable, Sendable {
 
     /// The variant most agents agree on; on a tie, the one from the agent listed first.
     public var suggestedVariant: Int {
-        variants.indices.max { variants[$0].agents.count < variants[$1].agents.count || (variants[$0].agents.count == variants[$1].agents.count && $0 > $1) } ?? 0
+        variants.indices.max {
+            variants[$0].agents.count < variants[$1].agents.count || (variants[$0].agents.count == variants[$1].agents.count && $0 > $1)
+        } ?? 0
     }
 
     /// The registry entry for `variant`: AgentHub takes ownership of exactly the agents that have that definition.

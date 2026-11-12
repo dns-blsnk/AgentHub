@@ -36,8 +36,10 @@ public struct AgentStatus: Identifiable, Sendable, Equatable {
     /// Project-scope servers by name → project paths (with `~`), shown but never written.
     public var projectServers: [String: [String]]
 
-    public init(id: AgentID, name: String, installed: Bool, configPath: String, serverNames: [String], error: String?,
-                supportedTransports: Set<Transport> = [.stdio, .http], projectServers: [String: [String]] = [:]) {
+    public init(
+        id: AgentID, name: String, installed: Bool, configPath: String, serverNames: [String], error: String?,
+        supportedTransports: Set<Transport> = [.stdio, .http], projectServers: [String: [String]] = [:]
+    ) {
         self.id = id
         self.name = name
         self.installed = installed
@@ -71,7 +73,8 @@ extension Agents {
                 serverNames: names,
                 error: readError,
                 supportedTransports: adapter.supportedTransports,
-                projectServers: installed ? adapter.projectServers().mapValues { $0.map { $0.replacingOccurrences(of: home, with: "~") } } : [:]
+                projectServers: installed
+                    ? adapter.projectServers().mapValues { $0.map { $0.replacingOccurrences(of: home, with: "~") } } : [:]
             )
         }
         return (adapters, statuses)

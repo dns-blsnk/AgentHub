@@ -300,7 +300,16 @@ swift test                        # run AgentHubCore tests
 ./scripts/dev.sh                  # live loop: rebuild and relaunch on every save
 ./scripts/build-app.sh --debug    # debug .app in build/
 ./scripts/build-app.sh --install  # release .app into /Applications
+./scripts/format.sh               # format the code in place
+./scripts/lint.sh                 # fail on any formatting or lint finding
 ```
+
+Formatting and linting use two tools:
+
+- **swift format** (Apple's swift-format, part of the Swift 6 toolchain) handles layout: 4-space indentation, lines up to 140 characters, trailing commas, import order. Config: `.swift-format`.
+- **SwiftLint** (`brew install swiftlint`) checks style and common mistakes. Config: `.swiftlint.yml`. Rules that overlap with swift format's layout are turned off.
+
+Run `./scripts/format.sh` before committing, and `./scripts/lint.sh` to check.
 
 `scripts/dev.sh` watches `Sources/` and `Package.swift`. A failed build keeps the previous app running and prints the errors.
 

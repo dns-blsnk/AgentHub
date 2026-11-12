@@ -11,19 +11,22 @@ struct NotchGeometry: Equatable {
 
     static func current() -> NotchGeometry? {
         if let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }),
-           let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
+            let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea
+        {
             let frame = screen.frame
             let height = screen.safeAreaInsets.top
-            let zone = CGRect(x: frame.minX + left.width, y: frame.maxY - height,
-                              width: frame.width - left.width - right.width, height: height)
+            let zone = CGRect(
+                x: frame.minX + left.width, y: frame.maxY - height,
+                width: frame.width - left.width - right.width, height: height)
             return NotchGeometry(screenFrame: frame, zone: zone, hasNotch: true)
         }
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return nil }
         let frame = screen.frame
         let height = max(NSStatusBar.system.thickness, frame.maxY - screen.visibleFrame.maxY)
         let width: CGFloat = 200
-        return NotchGeometry(screenFrame: frame, zone: CGRect(x: frame.midX - width / 2, y: frame.maxY - height, width: width, height: height),
-                             hasNotch: false)
+        return NotchGeometry(
+            screenFrame: frame, zone: CGRect(x: frame.midX - width / 2, y: frame.maxY - height, width: width, height: height),
+            hasNotch: false)
     }
 }
 
@@ -88,7 +91,8 @@ final class NotchController {
 
         layout()
         followVisibility()
-        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+        let screensChanged = NSApplication.didChangeScreenParametersNotification
+        NotificationCenter.default.addObserver(forName: screensChanged, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.layout() }
         }
     }
@@ -187,8 +191,9 @@ final class NotchController {
     /// Keeps the panel's top edge on the screen's top edge, centered on the notch.
     private func resizePanel(to size: CGSize) {
         guard let geometry, size.width > 0, size.height > 0 else { return }
-        let frame = CGRect(x: geometry.zone.midX - size.width / 2, y: geometry.screenFrame.maxY - size.height,
-                           width: size.width, height: size.height)
+        let frame = CGRect(
+            x: geometry.zone.midX - size.width / 2, y: geometry.screenFrame.maxY - size.height,
+            width: size.width, height: size.height)
         if panel.frame != frame { panel.setFrame(frame, display: true) }
     }
 }

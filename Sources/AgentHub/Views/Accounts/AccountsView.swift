@@ -14,7 +14,9 @@ struct AccountsView: View {
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button { Task { await accounts.refreshAll() } } label: {
+                Button {
+                    Task { await accounts.refreshAll() }
+                } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .help("Re-read the current sign-ins")

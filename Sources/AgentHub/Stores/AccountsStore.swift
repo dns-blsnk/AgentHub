@@ -15,12 +15,15 @@ struct AccountKind: Sendable {
     let blocksWhileRunning: Bool
 
     static let all: [AccountKind] = [
-        AccountKind(agent: .claude, tool: "claude", loginArguments: ["auth", "login"],
-                    slot: ClaudeSignInSlot(), vault: .claude(), blocksWhileRunning: true),
-        AccountKind(agent: .codex, tool: "codex", loginArguments: ["login"],
-                    slot: CodexAuthSlot(), vault: .codex(), blocksWhileRunning: true),
-        AccountKind(agent: .antigravity, tool: "agy", loginArguments: [],
-                    slot: AntigravityKeyring(), vault: .antigravity(), blocksWhileRunning: false),
+        AccountKind(
+            agent: .claude, tool: "claude", loginArguments: ["auth", "login"],
+            slot: ClaudeSignInSlot(), vault: .claude(), blocksWhileRunning: true),
+        AccountKind(
+            agent: .codex, tool: "codex", loginArguments: ["login"],
+            slot: CodexAuthSlot(), vault: .codex(), blocksWhileRunning: true),
+        AccountKind(
+            agent: .antigravity, tool: "agy", loginArguments: [],
+            slot: AntigravityKeyring(), vault: .antigravity(), blocksWhileRunning: false),
     ]
 }
 
@@ -106,7 +109,10 @@ final class AccountsStore {
         guard await allowedToChange(agent) else { return }
         await perform(agent) { try $0.switchTo(account.email) }
         if let state = self.state(agent), state.message == nil, state.runningSessions > 0 {
-            update(agent) { $0.message = "Switched to \(account.email). \($0.runningSessions) running \($0.name) session(s) still use the previous account until restarted." }
+            update(agent) {
+                $0.message =
+                    "Switched to \(account.email). \($0.runningSessions) running \($0.name) session(s) still use the previous account until restarted."
+            }
         }
     }
 
@@ -200,13 +206,13 @@ final class AccountsStore {
         let tool = Self.runner.which(kind.tool)?.path ?? kind.tool
         let script = AppPaths.support.appendingPathComponent("\(kind.agent.rawValue)-sign-in.command")
         let body = """
-        #!/bin/zsh -l
-        echo "AgentHub: sign in to \(kind.agent.displayName) with the account you want to add."
-        echo "AgentHub picks it up automatically; close this window afterwards."
-        echo
-        exec \(CommandLineParser.join([tool] + kind.loginArguments))
+            #!/bin/zsh -l
+            echo "AgentHub: sign in to \(kind.agent.displayName) with the account you want to add."
+            echo "AgentHub picks it up automatically; close this window afterwards."
+            echo
+            exec \(CommandLineParser.join([tool] + kind.loginArguments))
 
-        """
+            """
         do {
             try PrivateFiles.makeDirectory(AppPaths.support)
             try body.write(to: script, atomically: true, encoding: .utf8)
@@ -214,7 +220,9 @@ final class AccountsStore {
             NSWorkspace.shared.open(script)
         } catch {
             let command = ([kind.tool] + kind.loginArguments).joined(separator: " ")
-            update(kind.agent) { $0.message = "Couldn't open Terminal: \(error.localizedDescription). Run `\(command)` yourself to sign in." }
+            update(kind.agent) {
+                $0.message = "Couldn't open Terminal: \(error.localizedDescription). Run `\(command)` yourself to sign in."
+            }
         }
     }
 

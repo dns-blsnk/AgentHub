@@ -62,9 +62,9 @@ public struct SessionScanner: Sendable {
         let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
         return files.filter { $0.pathExtension == "json" }.compactMap { file in
             guard let data = FileManager.default.contents(atPath: file.path),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let session = Self.claudeSession(from: json),
-                  ProcessTable.isAlive(session.pid)
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let session = Self.claudeSession(from: json),
+                ProcessTable.isAlive(session.pid)
             else { return nil }
             return session
         }
@@ -81,7 +81,8 @@ public struct SessionScanner: Sendable {
         default: state = .running
         }
         let since = ((json["statusUpdatedAt"] ?? json["updatedAt"]) as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
-        return AgentSession(agent: .claude, pid: pid, cwd: json["cwd"] as? String ?? "", name: json["name"] as? String, state: state, since: since)
+        return AgentSession(
+            agent: .claude, pid: pid, cwd: json["cwd"] as? String ?? "", name: json["name"] as? String, state: state, since: since)
     }
 
     // MARK: Codex
@@ -89,7 +90,9 @@ public struct SessionScanner: Sendable {
     /// Codex CLI processes; background `app-server` / `mcp-server` processes (IDE integrations) are not sessions.
     /// State comes from the session's rollout file: a `task_started` without a later `task_complete` is a turn in progress.
     public func codexSessions(_ processes: [ProcessTable.Entry]) -> [AgentSession] {
-        let candidates = processes.filter { $0.name == "codex" && !$0.arguments.contains(where: { ["app-server", "mcp-server"].contains($0) }) }
+        let candidates = processes.filter {
+            $0.name == "codex" && !$0.arguments.contains(where: { ["app-server", "mcp-server"].contains($0) })
+        }
         guard !candidates.isEmpty else { return [] }
         let rollouts = recentCodexRollouts()
         return candidates.map { process in
@@ -109,7 +112,9 @@ public struct SessionScanner: Sendable {
     /// Rollout files touched in the last two days, newest first, with their `session_meta` cwd and last 64 KB.
     func recentCodexRollouts() -> [Rollout] {
         let root = home.appendingPathComponent(".codex/sessions")
-        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey]) else {
+            return []
+        }
         let cutoff = Date().addingTimeInterval(-2 * 86_400)
         var files: [(URL, Date)] = []
         for case let url as URL in enumerator where url.pathExtension == "jsonl" {
@@ -121,8 +126,8 @@ public struct SessionScanner: Sendable {
             defer { try? handle.close() }
             let head = String(decoding: handle.readData(ofLength: 16_384), as: UTF8.self)
             guard let firstLine = head.split(separator: "\n").first,
-                  let meta = try? JSONSerialization.jsonObject(with: Data(firstLine.utf8)) as? [String: Any],
-                  let cwd = (meta["payload"] as? [String: Any])?["cwd"] as? String
+                let meta = try? JSONSerialization.jsonObject(with: Data(firstLine.utf8)) as? [String: Any],
+                let cwd = (meta["payload"] as? [String: Any])?["cwd"] as? String
             else { return nil }
             let size = (try? handle.seekToEnd()) ?? 0
             try? handle.seek(toOffset: size > 65_536 ? size - 65_536 : 0)
@@ -144,7 +149,9 @@ public struct SessionScanner: Sendable {
     /// agy processes; `agy acp` runs inside an IDE and isn't a session of its own.
     public func agySessions(_ processes: [ProcessTable.Entry]) -> [AgentSession] {
         processes.filter { $0.name == "agy" && !$0.arguments.contains("acp") }.map { process in
-            AgentSession(agent: .antigravity, pid: process.pid, cwd: ProcessTable.workingDirectory(process.pid) ?? "", state: .running, since: process.started)
+            AgentSession(
+                agent: .antigravity, pid: process.pid, cwd: ProcessTable.workingDirectory(process.pid) ?? "", state: .running,
+                since: process.started)
         }
     }
 }
@@ -172,8 +179,9 @@ public enum ProcessTable {
             let name = withUnsafeBytes(of: info.pbi_comm) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
             let started = Date(timeIntervalSince1970: Double(info.pbi_start_tvsec) + Double(info.pbi_start_tvusec) / 1_000_000)
             let isAgent = ["claude", "codex", "agy"].contains(name)
-            return Entry(pid: pid, parent: Int32(info.pbi_ppid), name: name,
-                         arguments: isAgent ? arguments(pid) : [], started: started)
+            return Entry(
+                pid: pid, parent: Int32(info.pbi_ppid), name: name,
+                arguments: isAgent ? arguments(pid) : [], started: started)
         }
     }
 

@@ -28,8 +28,10 @@ public struct AgentUsage: Sendable, Identifiable {
     public var note: String?
     public var fetchedAt: Date
 
-    public init(id: AgentID, name: String, plan: String? = nil, account: String? = nil,
-                windows: [UsageWindow] = [], note: String? = nil, fetchedAt: Date = Date()) {
+    public init(
+        id: AgentID, name: String, plan: String? = nil, account: String? = nil,
+        windows: [UsageWindow] = [], note: String? = nil, fetchedAt: Date = Date()
+    ) {
         self.id = id
         self.name = name
         self.plan = plan
@@ -74,13 +76,14 @@ public struct UsageReader: Sendable {
         var usage = AgentUsage(id: .claude, name: "Claude")
         let raw: String
         do {
-            raw = try CommandRunner.runRaw("/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], environment: nil)
+            raw = try CommandRunner.runRaw(
+                "/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], environment: nil)
         } catch {
             usage.note = "Not signed in to Claude Code with a Claude subscription."
             return usage
         }
         guard let oauth = (try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])?["claudeAiOauth"] as? [String: Any],
-              let token = oauth["accessToken"] as? String
+            let token = oauth["accessToken"] as? String
         else {
             usage.note = "Claude Code's sign-in has an unknown format."
             return usage
@@ -118,16 +121,20 @@ public struct UsageReader: Sendable {
                 case "weekly_scoped": label = "Week, \(model ?? "one model")"
                 default: label = model.map { "\(kind) (\($0))" } ?? kind
                 }
-                return UsageWindow(id: "\(kind)-\(model ?? "")-\(index)", label: label, usedFraction: percent / 100,
-                                   resetsAt: (limit["resets_at"] as? String).flatMap(parseDate))
+                return UsageWindow(
+                    id: "\(kind)-\(model ?? "")-\(index)", label: label, usedFraction: percent / 100,
+                    resetsAt: (limit["resets_at"] as? String).flatMap(parseDate))
             }
         }
-        let legacy: [(String, String)] = [("five_hour", "5-hour session"), ("seven_day", "Week, all models"),
-                                          ("seven_day_opus", "Week, Opus"), ("seven_day_sonnet", "Week, Sonnet")]
+        let legacy: [(String, String)] = [
+            ("five_hour", "5-hour session"), ("seven_day", "Week, all models"),
+            ("seven_day_opus", "Week, Opus"), ("seven_day_sonnet", "Week, Sonnet"),
+        ]
         let windows = legacy.compactMap { key, label -> UsageWindow? in
             guard let window = json[key] as? [String: Any], let utilization = window["utilization"] as? Double else { return nil }
-            return UsageWindow(id: key, label: label, usedFraction: utilization / 100,
-                               resetsAt: (window["resets_at"] as? String).flatMap(parseDate))
+            return UsageWindow(
+                id: key, label: label, usedFraction: utilization / 100,
+                resetsAt: (window["resets_at"] as? String).flatMap(parseDate))
         }
         guard !windows.isEmpty || json["five_hour"] != nil else { throw UsageError.unexpectedResponse }
         return windows
@@ -155,18 +162,23 @@ public struct UsageReader: Sendable {
         }
 
         do {
-            let assist = try await Self.json(for: Self.cloudCode("loadCodeAssist", token: token, body: [
-                "metadata": ["ideType": "ANTIGRAVITY", "platform": "PLATFORM_UNSPECIFIED", "pluginType": "GEMINI"],
-            ]))
+            let assist = try await Self.json(
+                for: Self.cloudCode(
+                    "loadCodeAssist", token: token,
+                    body: [
+                        "metadata": ["ideType": "ANTIGRAVITY", "platform": "PLATFORM_UNSPECIFIED", "pluginType": "GEMINI"]
+                    ]))
             usage.plan = (assist["currentTier"] as? [String: Any])?["id"] as? String
-            let project = (assist["cloudaicompanionProject"] as? [String: Any])?["id"] as? String
+            let project =
+                (assist["cloudaicompanionProject"] as? [String: Any])?["id"] as? String
                 ?? assist["cloudaicompanionProject"] as? String
             guard let project else {
                 usage.note = "Antigravity didn't report a project for this account."
                 return usage
             }
             let body: [String: Any] = ["project": project]
-            usage.windows = try Self.antigravityWindows(from: try await Self.json(for: Self.cloudCode("fetchAvailableModels", token: token, body: body)))
+            usage.windows = try Self.antigravityWindows(
+                from: try await Self.json(for: Self.cloudCode("fetchAvailableModels", token: token, body: body)))
             if usage.windows.isEmpty { usage.note = "No model quotas reported." }
         } catch {
             usage.note = error.localizedDescription
@@ -201,7 +213,8 @@ public struct UsageReader: Sendable {
         var seen = Set<String>()
         return ids.compactMap { id in
             guard seen.insert(id).inserted, let model = models[id] as? [String: Any],
-                  let quota = model["quotaInfo"] as? [String: Any] else { return nil }
+                let quota = model["quotaInfo"] as? [String: Any]
+            else { return nil }
             let reset = (quota["resetTime"] as? String).flatMap(parseDate)
             let remaining = quota["remainingFraction"] as? Double ?? (reset != nil ? 0 : nil)
             let label = model["displayName"] as? String ?? tierNames[id] ?? id
@@ -245,7 +258,8 @@ public struct UsageReader: Sendable {
 
     /// The newest non-empty `rate_limits` in the newest session files.
     static func latestCodexRateLimits(in sessions: URL, filesToScan: Int = 20) -> (windows: [UsageWindow], plan: String?, at: Date)? {
-        guard let enumerator = FileManager.default.enumerator(at: sessions, includingPropertiesForKeys: [.contentModificationDateKey]) else { return nil }
+        guard let enumerator = FileManager.default.enumerator(at: sessions, includingPropertiesForKeys: [.contentModificationDateKey])
+        else { return nil }
         var files: [(URL, Date)] = []
         for case let url as URL in enumerator where url.pathExtension == "jsonl" {
             files.append((url, (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast))
@@ -254,7 +268,8 @@ public struct UsageReader: Sendable {
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             for line in text.split(separator: "\n").reversed() where line.contains("\"rate_limits\":{") {
                 guard let event = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-                      let limits = findValue("rate_limits", in: event) as? [String: Any] else { continue }
+                    let limits = findValue("rate_limits", in: event) as? [String: Any]
+                else { continue }
                 let windows = codexWindows(from: limits)
                 guard !windows.isEmpty else { continue }
                 let at = (event["timestamp"] as? String).flatMap(parseDate) ?? modified

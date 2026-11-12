@@ -55,22 +55,31 @@ struct ServerForm: View {
                 } header: {
                     Text(transport == .stdio ? "Environment variables" : "Headers")
                 } footer: {
-                    Text("Values are kept in the macOS Keychain and written into the config of every agent below, since agents read them from there. A change here reaches all of them on Save.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Text(
+                        """
+                        Values are kept in the macOS Keychain and written into the config of every agent below, since agents \
+                        read them from there. A change here reaches all of them on Save.
+                        """
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
                 }
 
                 Section {
                     ForEach(store.agents) { agent in
                         VStack(alignment: .leading, spacing: 2) {
-                            Toggle(agent.name, isOn: Binding(
-                                get: { agents.contains(agent.id) },
-                                set: { if $0 { agents.insert(agent.id) } else { agents.remove(agent.id) } }
-                            ))
+                            Toggle(
+                                agent.name,
+                                isOn: Binding(
+                                    get: { agents.contains(agent.id) },
+                                    set: { if $0 { agents.insert(agent.id) } else { agents.remove(agent.id) } }
+                                )
+                            )
                             .disabled(!agent.installed || !agent.supports(transport))
                             if !agent.installed {
                                 Text("Not installed").font(.caption).foregroundStyle(.secondary)
                             } else if !agent.supports(transport) {
-                                Text("Can't run \(transport == .http ? "remote" : "local") servers").font(.caption).foregroundStyle(.secondary)
+                                Text("Can't run \(transport == .http ? "remote" : "local") servers").font(.caption).foregroundStyle(
+                                    .secondary)
                             } else if overwrites(agent) {
                                 Text("\(agent.name) already has a server named \"\(name)\"; it will be replaced.")
                                     .font(.caption).foregroundStyle(.orange)
@@ -208,7 +217,9 @@ private struct KeyRowEditor: View {
                     }
                 }
                 .labelsHidden()
-                Button { revealed.toggle() } label: {
+                Button {
+                    revealed.toggle()
+                } label: {
                     Image(systemName: revealed ? "eye.slash" : "eye")
                 }
                 .buttonStyle(.borderless)

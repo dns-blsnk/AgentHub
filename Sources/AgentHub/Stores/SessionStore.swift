@@ -39,7 +39,9 @@ final class SessionStore {
     private init(preview: Void) {
         isPreview = true
         sessions = [
-            AgentSession(agent: .claude, pid: 1, cwd: "/w/app", name: "fix-login", state: .waiting(reason: "permission"), since: .now.addingTimeInterval(-40)),
+            AgentSession(
+                agent: .claude, pid: 1, cwd: "/w/app", name: "fix-login", state: .waiting(reason: "permission"),
+                since: .now.addingTimeInterval(-40)),
             AgentSession(agent: .claude, pid: 2, cwd: "/w/api", name: "refactor", state: .working, since: .now.addingTimeInterval(-300)),
             AgentSession(agent: .codex, pid: 3, cwd: "/w/site", state: .idle),
         ]
@@ -84,8 +86,8 @@ final class SessionStore {
     }
 }
 
-private extension Optional where Wrapped == SessionState {
-    var isWaiting: Bool {
+extension Optional where Wrapped == SessionState {
+    fileprivate var isWaiting: Bool {
         if case .waiting = self { return true }
         return false
     }

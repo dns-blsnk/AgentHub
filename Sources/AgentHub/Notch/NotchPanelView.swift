@@ -34,7 +34,11 @@ struct NotchPanelView: View {
         .fixedSize(horizontal: false, vertical: true)
         .animation(notch.expanded ? .spring(duration: 0.3, bounce: 0.15) : .easeIn(duration: 0.18), value: notch.expanded)
         .animation(.spring(duration: 0.35, bounce: 0.25), value: notch.alert)
-        .onGeometryChange(for: CGSize.self) { $0.size } action: { onSize($0) }
+        .onGeometryChange(for: CGSize.self) {
+            $0.size
+        } action: {
+            onSize($0)
+        }
         .environment(\.colorScheme, .dark)
     }
 
@@ -326,10 +330,14 @@ private struct QuickActions: View {
                 .help("Switch the account of an agent")
             }
             Spacer()
-            Button { navigation.openMain(addingServer: true) } label: {
+            Button {
+                navigation.openMain(addingServer: true)
+            } label: {
                 Label("MCP", systemImage: "plus")
             }
-            Button { navigation.openMain() } label: {
+            Button {
+                navigation.openMain()
+            } label: {
                 Label("Open", systemImage: "arrow.up.forward.app")
             }
         }

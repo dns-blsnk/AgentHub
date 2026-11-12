@@ -14,7 +14,9 @@ struct UsageView: View {
                 }
                 Spacer()
                 if usage.loading { ProgressView().controlSize(.small) }
-                Button { Task { await usage.refresh() } } label: {
+                Button {
+                    Task { await usage.refresh() }
+                } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .help("Read the limits again")
@@ -32,10 +34,15 @@ struct UsageView: View {
                         ForEach(usage.usages) { usage in
                             UsageCard(usage: usage)
                         }
-                        Text("These numbers come from the same undocumented sources the agents use themselves, so they may stop working after an agent update.")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(
+                            """
+                            These numbers come from the same undocumented sources the agents use themselves, so \
+                            they may stop working after an agent update.
+                            """
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .padding(16)
                 }

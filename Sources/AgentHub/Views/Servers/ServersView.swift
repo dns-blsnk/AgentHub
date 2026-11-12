@@ -22,7 +22,12 @@ struct ServersView: View {
                 ContentUnavailableView {
                     Label("No MCP servers yet", systemImage: "point.3.connected.trianglepath.dotted")
                 } description: {
-                    Text("Import the servers your agents already have, or add one with any keys it needs, and AgentHub keeps it in every agent you pick.")
+                    Text(
+                        """
+                        Import the servers your agents already have, or add one with any keys it needs, \
+                        and AgentHub keeps it in every agent you pick.
+                        """
+                    )
                 } actions: {
                     HStack {
                         Button("Import from Agents…") { importing = true }
@@ -91,7 +96,9 @@ private struct Header: View {
             }
             Spacer()
             if store.busy { ProgressView().controlSize(.small) }
-            Button { Task { await store.refreshAgents() } } label: {
+            Button {
+                Task { await store.refreshAgents() }
+            } label: {
                 Image(systemName: "arrow.clockwise")
             }
             .help("Re-detect agents and re-read their configs")
@@ -267,16 +274,19 @@ private struct AgentCell: View {
     var body: some View {
         let error = store.errors[server.id]?[agent.id]
         HStack(spacing: 3) {
-            Toggle("", isOn: Binding(
-                get: { server.agents.contains(agent.id) },
-                set: { enabled in
-                    if enabled && overwritesForeignEntry {
-                        confirmingOverwrite = true
-                    } else {
-                        Task { await store.setAgent(agent.id, enabled: enabled, for: server) }
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { server.agents.contains(agent.id) },
+                    set: { enabled in
+                        if enabled && overwritesForeignEntry {
+                            confirmingOverwrite = true
+                        } else {
+                            Task { await store.setAgent(agent.id, enabled: enabled, for: server) }
+                        }
                     }
-                }
-            ))
+                )
+            )
             .toggleStyle(.checkbox)
             .labelsHidden()
             .disabled(!agent.installed || !supported)
@@ -300,11 +310,16 @@ private struct AgentCell: View {
                 Task { await store.setAgent(agent.id, enabled: true, for: server) }
             }
         } message: {
-            Text("\(agent.name) already has a server named \"\(server.name)\" that AgentHub didn't add. It will be replaced with AgentHub's definition; a snapshot of the config is kept.")
+            Text(
+                "\(agent.name) already has a server named \"\(server.name)\" that AgentHub didn't add. It will be replaced with AgentHub's definition; a snapshot of the config is kept."
+            )
         }
-        .help(!agent.installed ? "\(agent.name) is not installed"
-              : !supported ? "\(agent.name) can't run \(server.transport == .http ? "remote" : "local") servers"
-              : "\(server.name) in \(agent.name)")
+        .help(
+            !agent.installed
+                ? "\(agent.name) is not installed"
+                : !supported
+                    ? "\(agent.name) can't run \(server.transport == .http ? "remote" : "local") servers"
+                    : "\(server.name) in \(agent.name)")
     }
 
     /// The agent has an entry with this name that AgentHub didn't write (hand-made or another tool's).
@@ -314,7 +329,8 @@ private struct AgentCell: View {
 
     private func projectHelp(_ projects: [String]) -> String {
         let names = projects.map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")
-        return "Also in \(agent.name) project scope: \(names). AgentHub manages user scope only and leaves project files alone; the checkbox makes \(server.name) global."
+        return
+            "Also in \(agent.name) project scope: \(names). AgentHub manages user scope only and leaves project files alone; the checkbox makes \(server.name) global."
     }
 
     private var supported: Bool {

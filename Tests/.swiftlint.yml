@@ -1,0 +1,4 @@
+# Tests: fixtures are JSON and TOML copied from the agents' files, and a failed cast should fail the test.
+disabled_rules:
+  - force_cast
+  - line_length

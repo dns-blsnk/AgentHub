@@ -15,9 +15,14 @@ struct ImportSheet: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Import from agents").font(.headline)
-                Text("Servers already in your agents' configs. Importing only starts managing them in AgentHub: agent configs stay as they are, key values go to the Keychain.")
-                    .font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text(
+                    """
+                    Servers already in your agents' configs. Importing only starts managing them in AgentHub: agent \
+                    configs stay as they are, key values go to the Keychain.
+                    """
+                )
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
@@ -78,7 +83,8 @@ struct ImportSheet: View {
 
     private func runImport() {
         guard let candidates else { return }
-        let picks = candidates
+        let picks =
+            candidates
             .filter { selected.contains($0.name) }
             .map { (candidate: $0, variant: variants[$0.name] ?? $0.suggestedVariant) }
         importing = true
@@ -121,17 +127,21 @@ private struct CandidateRow: View {
                     }
                     .font(.caption)
                     let others = candidate.variants.indices.filter { $0 != variant }.flatMap { candidate.variants[$0].agents }
-                    Text("Agents differ on this server. \(agentNames(others)) keep\(others.count == 1 ? "s" : "") its own version untouched.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text(
+                        "Agents differ on this server. \(agentNames(others)) keep\(others.count == 1 ? "s" : "") its own version untouched."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
 
                 let secretArgs = chosen.found.secretLikeArguments
                 if !secretArgs.isEmpty {
-                    Label("\(secretArgs.joined(separator: ", ")) holds a secret in plain text in the arguments. After import, move it into a key.",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+                    Label(
+                        "\(secretArgs.joined(separator: ", ")) holds a secret in plain text in the arguments. After import, move it into a key.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
                 }
             }
         }

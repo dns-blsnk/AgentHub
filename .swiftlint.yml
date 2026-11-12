@@ -1,0 +1,67 @@
+# Style and correctness checks. Layout (indentation, wrapping, trailing commas) belongs to swift format
+# (.swift-format), so the rules that would fight it are off here.
+included:
+  - Sources
+  - Tests
+  - Package.swift
+excluded:
+  - .build
+  - build
+
+disabled_rules:
+  - trailing_comma          # swift format adds them to multi-line collections
+  - opening_brace           # swift format decides brace placement
+  - vertical_parameter_alignment_on_call
+  - todo
+  # Process output and agent files are decoded leniently on purpose: a stray byte shouldn't drop the whole text.
+  - optional_data_string_conversion
+
+opt_in_rules:
+  - empty_count
+  - first_where
+  - last_where
+  - contains_over_filter_count
+  - contains_over_first_not_nil
+  - sorted_first_last
+  - redundant_nil_coalescing
+  - closure_spacing
+  - toggle_bool
+  - discouraged_optional_boolean
+  - weak_delegate
+
+line_length:
+  warning: 140
+  ignores_comments: true
+  ignores_urls: true
+  ignores_interpolated_strings: true
+  # Test fixtures are JSON lines copied from the agents' files.
+  ignores_multiline_strings: true
+
+identifier_name:
+  min_length: 1
+  excluded: [id, x, y, r, i]
+
+type_name:
+  min_length: 2
+
+file_length:
+  warning: 700
+  error: 1200
+
+type_body_length:
+  warning: 400
+  error: 600
+
+function_body_length:
+  warning: 80
+  error: 150
+
+cyclomatic_complexity:
+  warning: 15
+  error: 25
+
+large_tuple:
+  warning: 3
+
+nesting:
+  type_level: 2

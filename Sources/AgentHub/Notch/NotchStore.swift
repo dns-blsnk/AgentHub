@@ -21,8 +21,9 @@ struct IslandAlert: Identifiable, Equatable {
     init?(_ event: SessionEvent) {
         switch event {
         case .finished(let session):
-            self.init(id: "finished-\(session.id)-\(Date().timeIntervalSince1970)", kind: .finished,
-                      title: "\(session.agent.shortName) finished", detail: session.title, pid: session.pid, persistent: false)
+            self.init(
+                id: "finished-\(session.id)-\(Date().timeIntervalSince1970)", kind: .finished,
+                title: "\(session.agent.shortName) finished", detail: session.title, pid: session.pid, persistent: false)
         case .waiting(let session, let reason):
             let what: String
             switch reason?.lowercased() {
@@ -30,8 +31,9 @@ struct IslandAlert: Identifiable, Equatable {
             case let reason? where !reason.isEmpty: what = "is waiting: \(reason)"
             default: what = "is waiting for you"
             }
-            self.init(id: Self.waitingID(session.id), kind: .waiting,
-                      title: "\(session.agent.shortName) \(what)", detail: session.title, pid: session.pid, persistent: true)
+            self.init(
+                id: Self.waitingID(session.id), kind: .waiting,
+                title: "\(session.agent.shortName) \(what)", detail: session.title, pid: session.pid, persistent: true)
         case .resumed:
             return nil
         }
@@ -39,8 +41,9 @@ struct IslandAlert: Identifiable, Equatable {
 
     init(limit usage: AgentUsage, window: UsageWindow) {
         let percent = Int(((window.usedFraction ?? 0) * 100).rounded())
-        self.init(id: "limit-\(usage.id.rawValue)-\(window.id)", kind: .limit,
-                  title: "\(usage.name): \(window.label) at \(percent)%", detail: "Close to the limit", pid: nil, persistent: false)
+        self.init(
+            id: "limit-\(usage.id.rawValue)-\(window.id)", kind: .limit,
+            title: "\(usage.name): \(window.label) at \(percent)%", detail: "Close to the limit", pid: nil, persistent: false)
     }
 
     init(id: String, kind: Kind, title: String, detail: String, pid: Int32?, persistent: Bool) {
@@ -113,4 +116,3 @@ final class NotchStore {
         return store
     }
 }
-

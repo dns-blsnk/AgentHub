@@ -8,10 +8,13 @@ struct AccountToggles: View {
 
     var body: some View {
         ForEach(agent.accounts) { account in
-            Toggle(account.email, isOn: Binding(
-                get: { account.email == agent.activeEmail },
-                set: { if $0 { Task { await accounts.switchTo(account, for: agent.id) } } }
-            ))
+            Toggle(
+                account.email,
+                isOn: Binding(
+                    get: { account.email == agent.activeEmail },
+                    set: { if $0 { Task { await accounts.switchTo(account, for: agent.id) } } }
+                )
+            )
             .disabled(agent.adding)
         }
     }

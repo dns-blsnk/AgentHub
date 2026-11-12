@@ -44,7 +44,7 @@ public enum PrivateFiles {
 enum JSONConfigFile {
     static func load(_ url: URL) throws -> [String: Any] {
         guard let data = FileManager.default.contents(atPath: url.path),
-              !data.allSatisfy({ $0 == 0x20 || $0 == 0x0A || $0 == 0x0D || $0 == 0x09 })
+            !data.allSatisfy({ $0 == 0x20 || $0 == 0x0A || $0 == 0x0D || $0 == 0x09 })
         else { return [:] }
         do {
             guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -77,8 +77,9 @@ enum JSONConfigFile {
             if let command = entry["command"] as? String {
                 let env = stringDictionary(entry["env"])
                 return FoundServer(
-                    server: MCPServer(name: name, transport: .stdio, command: command,
-                                      args: entry["args"] as? [String] ?? [], keys: env.keys.sorted()),
+                    server: MCPServer(
+                        name: name, transport: .stdio, command: command,
+                        args: entry["args"] as? [String] ?? [], keys: env.keys.sorted()),
                     values: env
                 )
             }
@@ -163,12 +164,15 @@ public enum CodexTOML {
             let values = keys[name] ?? [:]
             if let command = table["command"].flatMap({ strings(in: $0).first }) {
                 let args = table["args"].map(strings(in:)) ?? []
-                return FoundServer(server: MCPServer(name: name, transport: .stdio, command: command, args: args,
-                                                     keys: values.keys.sorted()), values: values)
+                return FoundServer(
+                    server: MCPServer(
+                        name: name, transport: .stdio, command: command, args: args,
+                        keys: values.keys.sorted()), values: values)
             }
             if let url = table["url"].flatMap({ strings(in: $0).first }) {
-                return FoundServer(server: MCPServer(name: name, transport: .http, url: url, keys: values.keys.sorted()),
-                                   values: values)
+                return FoundServer(
+                    server: MCPServer(name: name, transport: .http, url: url, keys: values.keys.sorted()),
+                    values: values)
             }
             return nil
         }
@@ -183,7 +187,10 @@ public enum CodexTOML {
         for char in value {
             guard current != nil else {
                 if char == "#" { break }
-                if char == "\"" || char == "'" { current = ""; quote = char }
+                if char == "\"" || char == "'" {
+                    current = ""
+                    quote = char
+                }
                 continue
             }
             if escaped {
@@ -266,9 +273,10 @@ public enum CodexTOML {
             if depth == 0 {
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
                 if trimmed.isEmpty { continue }
-                let key = trimmed.split(separator: "=", maxSplits: 1).first.map {
-                    $0.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-                } ?? ""
+                let key =
+                    trimmed.split(separator: "=", maxSplits: 1).first.map {
+                        $0.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                    } ?? ""
                 keeping = trimmed.hasPrefix("#") || !ownedMainKeys.contains(key)
             }
             if keeping { kept.append(line) }
@@ -304,7 +312,8 @@ public enum CodexTOML {
         var copying = false
         for line in lines {
             if let path = tablePath(line) {
-                copying = path.count >= 3 && path[0] == "mcp_servers" && path[1] == name
+                copying =
+                    path.count >= 3 && path[0] == "mcp_servers" && path[1] == name
                     && !["env", "http_headers"].contains(path[2])
             }
             if copying { kept.append(line) }

@@ -31,17 +31,23 @@ final class UsageStore {
         isPreview = true
         let now = Date()
         usages = [
-            AgentUsage(id: .claude, name: "Claude", plan: "pro", windows: [
-                UsageWindow(id: "s", label: "5-hour session", usedFraction: 0.14, resetsAt: now.addingTimeInterval(2 * 3600)),
-                UsageWindow(id: "w", label: "Week, all models", usedFraction: 0.47, resetsAt: now.addingTimeInterval(3 * 86_400)),
-                UsageWindow(id: "f", label: "Week, Fable", usedFraction: 0.92, resetsAt: now.addingTimeInterval(3 * 86_400)),
-            ]),
-            AgentUsage(id: .codex, name: "Codex", plan: "API key",
-                       note: "Signed in with an API key: billed per token, no plan limits. Sign in with ChatGPT to see them."),
-            AgentUsage(id: .antigravity, name: "Antigravity", plan: "free-tier", account: "me@example.com", windows: [
-                UsageWindow(id: "c", label: "Claude Sonnet 4.6 (Thinking)", usedFraction: 0, resetsAt: now.addingTimeInterval(7 * 86_400)),
-                UsageWindow(id: "g", label: "Gemini Pro / Flash", usedFraction: 1, resetsAt: now.addingTimeInterval(5 * 86_400)),
-            ]),
+            AgentUsage(
+                id: .claude, name: "Claude", plan: "pro",
+                windows: [
+                    UsageWindow(id: "s", label: "5-hour session", usedFraction: 0.14, resetsAt: now.addingTimeInterval(2 * 3600)),
+                    UsageWindow(id: "w", label: "Week, all models", usedFraction: 0.47, resetsAt: now.addingTimeInterval(3 * 86_400)),
+                    UsageWindow(id: "f", label: "Week, Fable", usedFraction: 0.92, resetsAt: now.addingTimeInterval(3 * 86_400)),
+                ]),
+            AgentUsage(
+                id: .codex, name: "Codex", plan: "API key",
+                note: "Signed in with an API key: billed per token, no plan limits. Sign in with ChatGPT to see them."),
+            AgentUsage(
+                id: .antigravity, name: "Antigravity", plan: "free-tier", account: "me@example.com",
+                windows: [
+                    UsageWindow(
+                        id: "c", label: "Claude Sonnet 4.6 (Thinking)", usedFraction: 0, resetsAt: now.addingTimeInterval(7 * 86_400)),
+                    UsageWindow(id: "g", label: "Gemini Pro / Flash", usedFraction: 1, resetsAt: now.addingTimeInterval(5 * 86_400)),
+                ]),
         ]
         lastRefresh = now
     }

@@ -28,20 +28,29 @@ final class ServerStore {
     private init(preview: Void) {
         isPreview = true
         servers = [
-            MCPServer(name: "github", transport: .stdio, command: "npx", args: ["-y", "@modelcontextprotocol/server-github"],
-                      keys: ["GITHUB_TOKEN"], agents: [.claude, .codex, .antigravity], appliedAgents: [.claude, .codex, .antigravity]),
-            MCPServer(name: "sentry", transport: .http, url: "https://mcp.sentry.dev/mcp",
-                      keys: ["Authorization", "X-Org-Id"], agents: [.claude, .cursor], appliedAgents: [.claude]),
+            MCPServer(
+                name: "github", transport: .stdio, command: "npx", args: ["-y", "@modelcontextprotocol/server-github"],
+                keys: ["GITHUB_TOKEN"], agents: [.claude, .codex, .antigravity], appliedAgents: [.claude, .codex, .antigravity]),
+            MCPServer(
+                name: "sentry", transport: .http, url: "https://mcp.sentry.dev/mcp",
+                keys: ["Authorization", "X-Org-Id"], agents: [.claude, .cursor], appliedAgents: [.claude]),
         ]
         agents = [
-            AgentStatus(id: .claude, name: "Claude Code", installed: true, configPath: "~/.claude.json", serverNames: ["github"], error: nil,
-                        projectServers: ["sentry": ["~/work/app", "~/work/api"]]),
-            AgentStatus(id: .codex, name: "Codex", installed: true, configPath: "~/.codex/config.toml", serverNames: ["github"], error: nil),
-            AgentStatus(id: .antigravity, name: "Antigravity", installed: true, configPath: "~/.gemini/config/mcp_config.json", serverNames: ["github"], error: nil),
-            AgentStatus(id: .gemini, name: "Gemini CLI", installed: false, configPath: "~/.gemini/settings.json", serverNames: [], error: nil),
+            AgentStatus(
+                id: .claude, name: "Claude Code", installed: true, configPath: "~/.claude.json", serverNames: ["github"], error: nil,
+                projectServers: ["sentry": ["~/work/app", "~/work/api"]]),
+            AgentStatus(
+                id: .codex, name: "Codex", installed: true, configPath: "~/.codex/config.toml", serverNames: ["github"], error: nil),
+            AgentStatus(
+                id: .antigravity, name: "Antigravity", installed: true, configPath: "~/.gemini/config/mcp_config.json",
+                serverNames: ["github"], error: nil),
+            AgentStatus(
+                id: .gemini, name: "Gemini CLI", installed: false, configPath: "~/.gemini/settings.json", serverNames: [], error: nil),
             AgentStatus(id: .cursor, name: "Cursor", installed: true, configPath: "~/.cursor/mcp.json", serverNames: [], error: nil),
-            AgentStatus(id: .claudeDesktop, name: "Claude Desktop", installed: true, configPath: "~/Library/Application Support/Claude/claude_desktop_config.json",
-                        serverNames: ["github"], error: nil, supportedTransports: [.stdio]),
+            AgentStatus(
+                id: .claudeDesktop, name: "Claude Desktop", installed: true,
+                configPath: "~/Library/Application Support/Claude/claude_desktop_config.json",
+                serverNames: ["github"], error: nil, supportedTransports: [.stdio]),
         ]
         errors = [servers[1].id: [.cursor: "Sample error: ~/.cursor/mcp.json is not plain JSON"]]
     }

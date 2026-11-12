@@ -67,7 +67,8 @@ public struct ClaudeAdapter: AgentAdapter {
             try runner.run("claude", Self.addArguments(server, values: values), secrets: Array(values.values))
         } catch {
             if let previous, let data = try? JSONSerialization.data(withJSONObject: previous),
-               let json = String(data: data, encoding: .utf8) {
+                let json = String(data: data, encoding: .utf8)
+            {
                 _ = try? runner.run("claude", ["mcp", "add-json", "-s", "user", server.name, json], secrets: [json])
             }
             throw error
@@ -331,7 +332,8 @@ public struct ClaudeDesktopAdapter: AgentAdapter {
             guard let colon = header.firstIndex(of: ":") else { return nil }
             let name = String(header[..<colon])
             guard header[header.index(after: colon)...] == "${\(headerVariable(name))}",
-                  let value = found.values[headerVariable(name)] else { return nil }
+                let value = found.values[headerVariable(name)]
+            else { return nil }
             keys.append(name)
             values[name] = value
             rest = rest.dropFirst(2)

@@ -35,7 +35,8 @@ public enum AccountError: LocalizedError {
         case .writeFailed: return "Couldn't update the agent's sign-in."
         case .unknownAccount(let email): return "No saved sign-in for \(email)."
         case .sessionsRunning(let agent, let count):
-            return "Close the \(count) running \(agent) session(s) first: \(agent) rewrites its sign-in while it runs and would undo the switch."
+            return
+                "Close the \(count) running \(agent) session(s) first: \(agent) rewrites its sign-in while it runs and would undo the switch."
         }
     }
 }
@@ -74,11 +75,15 @@ public struct AccountVault: Sendable {
     }
 
     public static func codex() -> AccountVault {
-        AccountVault(metadataURL: AppPaths.support.appendingPathComponent("codex-accounts.json"), keychain: KeychainStore(service: "dev.agenthub.codex"))
+        AccountVault(
+            metadataURL: AppPaths.support.appendingPathComponent("codex-accounts.json"),
+            keychain: KeychainStore(service: "dev.agenthub.codex"))
     }
 
     public static func claude() -> AccountVault {
-        AccountVault(metadataURL: AppPaths.support.appendingPathComponent("claude-accounts.json"), keychain: KeychainStore(service: "dev.agenthub.claude"))
+        AccountVault(
+            metadataURL: AppPaths.support.appendingPathComponent("claude-accounts.json"),
+            keychain: KeychainStore(service: "dev.agenthub.claude"))
     }
 
     public func load() -> [SavedAccount] {
@@ -200,7 +205,8 @@ public struct CodexAuthSlot: SignInSlot {
     /// The ChatGPT account's email from the id token, or the API key's last four characters.
     static func identity(_ json: [String: Any]) -> String? {
         if let token = (json["tokens"] as? [String: Any])?["id_token"] as? String,
-           let claims = jwtClaims(token), let email = claims["email"] as? String {
+            let claims = jwtClaims(token), let email = claims["email"] as? String
+        {
             return email
         }
         if let key = json["OPENAI_API_KEY"] as? String, key.count > 4 {
@@ -238,13 +244,15 @@ public struct ClaudeSignInSlot: SignInSlot {
         var saved: [String: Any] = ["claudeAiOauth": oauth]
         if let profile { saved["oauthAccount"] = profile }
         let data = try JSONSerialization.data(withJSONObject: saved, options: .sortedKeys)
-        return SignIn(raw: String(decoding: data, as: UTF8.self), email: profile?["emailAddress"] as? String,
-                      authMethod: oauth["subscriptionType"] as? String)
+        return SignIn(
+            raw: String(decoding: data, as: UTF8.self), email: profile?["emailAddress"] as? String,
+            authMethod: oauth["subscriptionType"] as? String)
     }
 
     public func write(_ raw: String) throws {
         guard let saved = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
-              let oauth = saved["claudeAiOauth"] as? [String: Any] else { throw AccountError.unexpectedFormat }
+            let oauth = saved["claudeAiOauth"] as? [String: Any]
+        else { throw AccountError.unexpectedFormat }
         var item = try readItem() ?? [:]
         item["claudeAiOauth"] = oauth
         try writeItem(item)
@@ -274,7 +282,10 @@ public struct ClaudeSignInSlot: SignInSlot {
         } catch let error as CommandError where error.status == 44 {
             return nil
         }
-        guard let item = try? JSONSerialization.jsonObject(with: Data(raw.trimmingCharacters(in: .whitespacesAndNewlines).utf8)) as? [String: Any] else {
+        guard
+            let item = try? JSONSerialization.jsonObject(with: Data(raw.trimmingCharacters(in: .whitespacesAndNewlines).utf8))
+                as? [String: Any]
+        else {
             throw AccountError.unexpectedFormat
         }
         return item
@@ -293,12 +304,15 @@ public struct ClaudeSignInSlot: SignInSlot {
         )
         // `security -i` exits 0 even when the command inside fails.
         guard let written = try readItem(),
-              NSDictionary(dictionary: written).isEqual(to: item) else { throw AccountError.writeFailed }
+            NSDictionary(dictionary: written).isEqual(to: item)
+        else { throw AccountError.writeFailed }
     }
 
     /// The item's account attribute (Claude Code uses the macOS user name).
     private func itemAccount() -> String? {
-        guard let output = try? CommandRunner.runRaw("/usr/bin/security", ["find-generic-password", "-s", service], environment: nil) else { return nil }
+        guard let output = try? CommandRunner.runRaw("/usr/bin/security", ["find-generic-password", "-s", service], environment: nil) else {
+            return nil
+        }
         for line in output.split(separator: "\n") where line.contains("\"acct\"<blob>=\"") {
             return line.components(separatedBy: "<blob>=\"").last.map { String($0.dropLast()) }
         }
