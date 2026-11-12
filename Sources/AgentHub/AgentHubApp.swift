@@ -8,6 +8,7 @@ struct AgentHubApp: App {
     var body: some Scene {
         MenuBarExtra("AgentHub", systemImage: "point.3.connected.trianglepath.dotted") {
             MenuBarContent(openMain: { delegate.showMain() })
+                .environment(delegate.loginItem)
                 .environment(delegate.model)
                 .environment(delegate.accounts)
                 .environment(delegate.usage)
@@ -31,10 +32,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let accounts = AccountsModel()
     let usage = UsageModel()
     let windowState = WindowState()
+    let loginItem = LoginItem()
     private var notch: NotchController?
     private var mainWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        loginItem.enableOnFirstInstalledLaunch()
         notch = NotchController(usage: usage, accounts: accounts, actions: NotchActions(
             openMain: { [weak self] in self?.showMain() },
             addServer: { [weak self] in self?.showMain(addingServer: true) }
@@ -100,6 +103,7 @@ private struct MenuBarContent: View {
     @Environment(AppModel.self) private var model
     @Environment(AccountsModel.self) private var accounts
     @Environment(UsageModel.self) private var usage
+    @Environment(LoginItem.self) private var loginItem
 
     var body: some View {
         Button("Open AgentHub", action: openMain)
@@ -130,7 +134,12 @@ private struct MenuBarContent: View {
         }
 
         Divider()
+        Toggle("Launch at Login", isOn: Binding(get: { loginItem.enabled }, set: { loginItem.set($0) }))
+        if let message = loginItem.message {
+            Text(message)
+        }
         Button("Quit AgentHub") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
     }
 }
+
