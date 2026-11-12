@@ -51,7 +51,12 @@ struct MenuBarContent: View {
             case "Week, all models", "Week": label = "week"
             default: label = window.label
             }
-            return "\(label) \(Int((used * 100).rounded()))%"
+            return usage.reportsRemaining
+                ? "\(label) \(Int(((1 - used) * 100).rounded()))% left"
+                : "\(label) \(Int((used * 100).rounded()))%"
+        }
+        if parts.isEmpty, let tokens = usage.tokensToday {
+            return "\(usage.name): today \(TokenUsage.compact(tokens.total)) tokens"
         }
         return parts.isEmpty ? nil : "\(usage.name): " + parts.joined(separator: " · ")
     }

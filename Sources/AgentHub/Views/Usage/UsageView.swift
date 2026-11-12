@@ -77,7 +77,25 @@ private struct UsageCard: View {
                 }
             }
             ForEach(usage.windows) { window in
-                WindowRow(window: window)
+                WindowRow(window: window, remaining: usage.reportsRemaining)
+            }
+            if let tokens = usage.tokensToday {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Today")
+                        Spacer()
+                        Text(TokenUsage.compact(tokens.total))
+                            .font(.title3.weight(.semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(UsageTone.fresh)
+                        Text("tokens").foregroundStyle(.secondary)
+                    }
+                    .font(.callout)
+                    if tokens.total > 0 {
+                        HourlyTokenBars(hourly: tokens.hourly, height: 40)
+                        TokenLegend(tokens: tokens).font(.caption)
+                    }
+                }
             }
             if let note = usage.note {
                 Label(note, systemImage: usage.windows.isEmpty ? "info.circle" : "exclamationmark.triangle")
@@ -93,34 +111,30 @@ private struct UsageCard: View {
 
 private struct WindowRow: View {
     let window: UsageWindow
+    /// Show what's left (Antigravity) instead of what's used.
+    let remaining: Bool
 
     var body: some View {
+        let tint = UsageTone.color(used: window.usedFraction ?? 0)
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(window.label)
                 Spacer()
-                if let used = window.usedFraction {
-                    Text("\(Int((used * 100).rounded()))% used")
+                if let shown = window.shownFraction(remaining: remaining) {
+                    Text("\(Int((shown * 100).rounded()))% \(remaining ? "left" : "used")")
                         .monospacedDigit()
-                        .foregroundStyle(used >= 0.9 ? .red : .secondary)
+                        .fontWeight(.medium)
+                        .foregroundStyle(tint)
                 }
             }
             .font(.callout)
-            ProgressView(value: window.usedFraction ?? 0)
+            ProgressView(value: window.shownFraction(remaining: remaining) ?? 0)
                 .tint(tint)
             if let reset = window.resetsAt {
                 Text(resetText(reset))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-        }
-    }
-
-    private var tint: Color {
-        switch window.usedFraction ?? 0 {
-        case 0.9...: return .red
-        case 0.7...: return .orange
-        default: return .accentColor
         }
     }
 

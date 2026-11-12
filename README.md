@@ -160,10 +160,12 @@ Before AgentHub changes an agent's config, it copies the file to
 | Agent | Source | What you see |
 |---|---|---|
 | **Claude** | `https://api.anthropic.com/api/oauth/usage` with Claude Code's own sign-in (Keychain item `Claude Code-credentials`) | 5-hour session, weekly (all models), weekly per model; plan; reset times |
-| **Antigravity** | Google Cloud Code endpoints `loadCodeAssist` and `fetchAvailableModels` with `agy`'s sign-in (Keychain `gemini` / `antigravity`) | remaining quota per model and reset time |
-| **Codex** | the latest `rate_limits` event in `~/.codex/sessions/**/*.jsonl` | 5-hour and weekly windows, plan; as of the last Codex turn |
+| **Antigravity** | Google Cloud Code endpoints `loadCodeAssist` and `fetchAvailableModels` with `agy`'s sign-in (Keychain `gemini` / `antigravity`) | quota left per model (shown as "left", the way the service reports it) and reset time. The list includes Claude and GPT-OSS models because Antigravity offers them itself, each with its own quota |
+| **Codex** | the latest `rate_limits` event and the `token_count` events in `~/.codex/sessions/**/*.jsonl` | 5-hour and weekly windows and plan (ChatGPT sign-in), as of the last Codex turn; tokens spent today for any sign-in, API key included: total, an hourly chart, and the split between cached input, new input and output |
 
 - Limits refresh when the panel opens (if older than 30 s), from **Refresh**, and every 5 minutes in the background.
+- An Antigravity quota that hasn't been touched shows no reset time: the service reports "now + 7 days" for it, which moves on every read.
+- Percentages are colored by how much is used: green, then orange from 70 %, red from 90 %.
 - When a window crosses **80 %**, the notch shows an alert once for that window.
 - An expired Antigravity token is renewed by running `agy models`, which refreshes it the way `agy` itself does.
 - These are the same endpoints the agents use themselves. They are not public APIs and may change.

@@ -16,6 +16,34 @@ public struct UsageWindow: Sendable, Hashable, Identifiable {
     }
 }
 
+/// Tokens spent over a period, as the agent counts them: `input` includes `cachedInput`.
+public struct TokenUsage: Sendable, Equatable {
+    public var input = 0
+    public var cachedInput = 0
+    public var output = 0
+    /// `total` per hour of the day, local time; empty when not broken down.
+    public var hourly: [Int] = []
+
+    public init(input: Int = 0, cachedInput: Int = 0, output: Int = 0, hourly: [Int] = []) {
+        self.input = input
+        self.cachedInput = cachedInput
+        self.output = output
+        self.hourly = hourly
+    }
+
+    public var total: Int { input + output }
+    /// Input that wasn't served from the cache.
+    public var freshInput: Int { max(input - cachedInput, 0) }
+
+    mutating func add(_ spent: TokenUsage, atHour hour: Int) {
+        input += spent.input
+        cachedInput += spent.cachedInput
+        output += spent.output
+        if hourly.isEmpty { hourly = Array(repeating: 0, count: 24) }
+        hourly[hour] += spent.total
+    }
+}
+
 public struct AgentUsage: Sendable, Identifiable {
     public var id: AgentID
     public var name: String
@@ -24,19 +52,25 @@ public struct AgentUsage: Sendable, Identifiable {
     /// Whose limits these are, when the source says.
     public var account: String?
     public var windows: [UsageWindow]
+    /// Tokens spent today, for agents that log them locally.
+    public var tokensToday: TokenUsage?
+    /// The source reports what's left rather than what's used (Antigravity), so that's what to show.
+    public var reportsRemaining = false
     /// Why there are no windows, or a caveat about them.
     public var note: String?
     public var fetchedAt: Date
 
     public init(
-        id: AgentID, name: String, plan: String? = nil, account: String? = nil,
-        windows: [UsageWindow] = [], note: String? = nil, fetchedAt: Date = Date()
+        id: AgentID, name: String, plan: String? = nil, account: String? = nil, reportsRemaining: Bool = false,
+        windows: [UsageWindow] = [], tokensToday: TokenUsage? = nil, note: String? = nil, fetchedAt: Date = Date()
     ) {
         self.id = id
         self.name = name
         self.plan = plan
         self.account = account
         self.windows = windows
+        self.tokensToday = tokensToday
+        self.reportsRemaining = reportsRemaining
         self.note = note
         self.fetchedAt = fetchedAt
     }
@@ -145,7 +179,7 @@ public struct UsageReader: Sendable {
     /// The quota agy itself refreshes: `fetchAvailableModels` lists each model with `quotaInfo`.
     /// agy only renews its token while it runs, so an expired one is renewed by `agy models`, which agy writes back itself.
     public func antigravity() async -> AgentUsage {
-        var usage = AgentUsage(id: .antigravity, name: "Antigravity")
+        var usage = AgentUsage(id: .antigravity, name: "Antigravity", reportsRemaining: true)
         let keyring = AntigravityKeyring()
         guard var credential = try? keyring.readCredential() else {
             usage.note = "agy is not signed in."
@@ -187,7 +221,8 @@ public struct UsageReader: Sendable {
     }
 
     /// The models agy offers the agent (`agentModelSorts`) plus the Gemini tiers. A `resetTime` without
-    /// `remainingFraction` means nothing is left: protobuf leaves zero values out.
+    /// `remainingFraction` means nothing is left: protobuf leaves zero values out. An untouched quota reports a
+    /// `resetTime` of now plus the window (it moves on every read), so it has no reset until it's used.
     static func antigravityWindows(from json: [String: Any]) throws -> [UsageWindow] {
         guard let models = json["models"] as? [String: Any] else { throw UsageError.unexpectedResponse }
         var ids: [String] = []
@@ -218,7 +253,7 @@ public struct UsageReader: Sendable {
             let reset = (quota["resetTime"] as? String).flatMap(parseDate)
             let remaining = quota["remainingFraction"] as? Double ?? (reset != nil ? 0 : nil)
             let label = model["displayName"] as? String ?? tierNames[id] ?? id
-            return UsageWindow(id: id, label: label, usedFraction: remaining.map { 1 - $0 }, resetsAt: reset)
+            return UsageWindow(id: id, label: label, usedFraction: remaining.map { 1 - $0 }, resetsAt: remaining == 1 ? nil : reset)
         }
     }
 
@@ -236,17 +271,20 @@ public struct UsageReader: Sendable {
     // MARK: Codex
 
     /// Codex writes `rate_limits` into its session files after each turn, but only for a ChatGPT sign-in.
+    /// Token counts are there for any sign-in.
     public func codex() -> AgentUsage {
         var usage = AgentUsage(id: .codex, name: "Codex")
         let codexHome = runner.home.appendingPathComponent(".codex")
+        let sessions = codexHome.appendingPathComponent("sessions")
+        usage.tokensToday = Self.codexTokens(in: sessions, since: Calendar.current.startOfDay(for: Date()))
         let auth = (FileManager.default.contents(atPath: codexHome.appendingPathComponent("auth.json").path))
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         if (auth?["auth_mode"] as? String) == "apikey" {
             usage.plan = "API key"
-            usage.note = "Signed in with an API key: billed per token, no plan limits. Sign in with ChatGPT to see them."
+            usage.note = "API key: billed per token, no plan limits."
             return usage
         }
-        guard let latest = Self.latestCodexRateLimits(in: codexHome.appendingPathComponent("sessions")) else {
+        guard let latest = Self.latestCodexRateLimits(in: sessions) else {
             usage.note = "No limits yet: Codex writes them after the first reply in a session."
             return usage
         }
@@ -277,6 +315,47 @@ public struct UsageReader: Sendable {
             }
         }
         return nil
+    }
+
+    /// Tokens spent since `since`, from the `token_count` events of session files touched since then. Each event
+    /// carries the thread's running total; the change from the previous event is what that reply spent. The first
+    /// event in a file counts only its own reply, so a resumed thread isn't counted twice.
+    static func codexTokens(in sessions: URL, since: Date) -> TokenUsage {
+        guard let enumerator = FileManager.default.enumerator(at: sessions, includingPropertiesForKeys: [.contentModificationDateKey])
+        else { return TokenUsage() }
+        var sum = TokenUsage()
+        let calendar = Calendar.current
+        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+            guard let modified = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, modified >= since,
+                let text = try? String(contentsOf: url, encoding: .utf8)
+            else { continue }
+            var previous: TokenUsage?
+            for line in text.split(separator: "\n") where line.contains("\"total_token_usage\"") {
+                guard let event = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                    let info = findValue("info", in: event) as? [String: Any],
+                    let total = (info["total_token_usage"] as? [String: Any]).map(tokenUsage)
+                else { continue }
+                let last = (info["last_token_usage"] as? [String: Any]).map(tokenUsage) ?? TokenUsage()
+                let spent: TokenUsage
+                if let previous, total.total >= previous.total {
+                    spent = TokenUsage(
+                        input: total.input - previous.input, cachedInput: max(total.cachedInput - previous.cachedInput, 0),
+                        output: total.output - previous.output)
+                } else {
+                    spent = last
+                }
+                previous = total
+                if let at = (event["timestamp"] as? String).flatMap(parseDate), at >= since {
+                    sum.add(spent, atHour: calendar.component(.hour, from: at))
+                }
+            }
+        }
+        return sum
+    }
+
+    private static func tokenUsage(_ json: [String: Any]) -> TokenUsage {
+        func int(_ key: String) -> Int { (json[key] as? NSNumber)?.intValue ?? 0 }
+        return TokenUsage(input: int("input_tokens"), cachedInput: int("cached_input_tokens"), output: int("output_tokens"))
     }
 
     static func codexWindows(from limits: [String: Any]) -> [UsageWindow] {

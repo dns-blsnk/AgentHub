@@ -151,6 +151,7 @@ final class SyncTests: XCTestCase {
         let sessions = try FileManager.default.contentsOfDirectory(atPath: home.appendingPathComponent("snapshots").path)
         XCTAssertFalse(sessions.isEmpty)
     }
+
 }
 
 final class CommandLineParserTests: XCTestCase {
@@ -446,6 +447,48 @@ final class UsageTests: XCTestCase {
         XCTAssertEqual(windows[0].usedFraction ?? -1, 0.75, accuracy: 0.0001)
         XCTAssertEqual(windows[1].usedFraction, 1)  // reset time without a fraction: used up
         XCTAssertEqual(windows[2].usedFraction, 0)
+        XCTAssertNotNil(windows[0].resetsAt)
+    }
+
+    func testUntouchedAntigravityQuotaHasNoReset() throws {
+        let json =
+            try JSONSerialization.jsonObject(
+                with: Data(
+                    #"""
+                    {"models":{"m":{"displayName":"M","quotaInfo":{"remainingFraction":1,"resetTime":"2026-11-19T15:13:17Z"}}},
+                     "agentModelSorts":[{"groups":[{"modelIds":["m"]}]}]}
+                    """#.utf8)) as! [String: Any]
+        let window = try XCTUnwrap(UsageReader.antigravityWindows(from: json).first)
+        XCTAssertEqual(window.usedFraction, 0)
+        XCTAssertNil(window.resetsAt)
+    }
+
+    func testCodexTokensSinceStartOfDay() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func event(_ time: String, total: (Int, Int, Int), last: (Int, Int, Int)) -> String {
+            #"{"timestamp":"\#(time)","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":\#(total.0),"cached_input_tokens":\#(total.1),"output_tokens":\#(total.2)},"last_token_usage":{"input_tokens":\#(last.0),"cached_input_tokens":\#(last.1),"output_tokens":\#(last.2)}},"rate_limits":null}}"#
+        }
+        // A thread from yesterday, continued today; the same event twice; then a resumed thread in a new file.
+        try [
+            event("2026-03-04T22:00:00Z", total: (1000, 800, 50), last: (1000, 800, 50)),
+            event("2026-03-05T09:00:00Z", total: (1500, 1200, 80), last: (500, 400, 30)),
+            event("2026-03-05T09:00:01Z", total: (1500, 1200, 80), last: (500, 400, 30)),
+            #"{"timestamp":"2026-03-05T09:01:00Z","type":"event_msg","payload":{"type":"token_count","info":null}}"#,
+        ].joined(separator: "\n").write(to: root.appendingPathComponent("a.jsonl"), atomically: true, encoding: .utf8)
+        try [
+            event("2026-03-05T10:00:00Z", total: (9000, 8000, 900), last: (200, 100, 10)),
+            event("2026-03-05T10:05:00Z", total: (9300, 8200, 920), last: (300, 200, 20)),
+        ].joined(separator: "\n").write(to: root.appendingPathComponent("b.jsonl"), atomically: true, encoding: .utf8)
+
+        let since = try XCTUnwrap(UsageReader.parseDate("2026-03-05T00:00:00Z"))
+        let tokens = UsageReader.codexTokens(in: root, since: since)
+        XCTAssertEqual([tokens.input, tokens.cachedInput, tokens.output], [500 + 200 + 300, 400 + 100 + 200, 30 + 10 + 20])
+        XCTAssertEqual(tokens.total, 1060)
+        XCTAssertEqual(tokens.freshInput, 300)
+        XCTAssertEqual(tokens.hourly.count, 24)
+        XCTAssertEqual(tokens.hourly.reduce(0, +), 1060)
     }
 
     func testCodexRateLimitsFromSessions() throws {

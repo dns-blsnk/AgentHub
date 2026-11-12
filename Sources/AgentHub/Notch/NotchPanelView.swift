@@ -235,20 +235,34 @@ private struct AgentSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(usage.name).font(.callout.weight(.semibold))
                 if let plan = usage.plan {
                     Text(plan).font(.caption2).foregroundStyle(.secondary)
                 }
+                Spacer()
+                if let tokens = usage.tokensToday, tokens.total > 0 {
+                    Text(TokenUsage.compact(tokens.total))
+                        .font(.callout.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(UsageTone.fresh)
+                    Text("tokens today").font(.caption2).foregroundStyle(.secondary)
+                } else if usage.reportsRemaining, !usage.windows.isEmpty {
+                    Text("quota left").font(.caption2).foregroundStyle(.secondary)
+                }
             }
-            if usage.windows.isEmpty, let note = usage.note {
+            if usage.windows.isEmpty, usage.tokensToday?.total ?? 0 == 0, let note = usage.note {
                 Text(note).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
             ForEach(usage.windows.prefix(maxWindows)) { window in
-                LimitRow(window: window)
+                LimitRow(window: window, remaining: usage.reportsRemaining)
             }
             if usage.windows.count > maxWindows {
                 Text("+\(usage.windows.count - maxWindows) more in AgentHub").font(.caption2).foregroundStyle(.tertiary)
+            }
+            if let tokens = usage.tokensToday, tokens.total > 0 {
+                HourlyTokenBars(hourly: tokens.hourly)
+                TokenLegend(tokens: tokens).font(.caption2)
             }
         }
     }
@@ -256,25 +270,37 @@ private struct AgentSection: View {
 
 private struct LimitRow: View {
     let window: UsageWindow
+    /// Show what's left (Antigravity) instead of what's used.
+    let remaining: Bool
 
     var body: some View {
+        let tone = UsageTone.color(used: window.usedFraction ?? 0)
+        let shown = window.shownFraction(remaining: remaining)
         HStack(spacing: 8) {
             Text(window.label)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(width: 128, alignment: .leading)
-            Bar(fraction: window.usedFraction ?? 0)
-            Text(window.usedFraction.map { "\(Int(($0 * 100).rounded()))%" } ?? "–")
+            Bar(fraction: shown ?? 0, color: tone)
+            Text(shown.map { "\(Int(($0 * 100).rounded()))%\(remaining ? " left" : "")" } ?? "–")
                 .monospacedDigit()
-                .frame(width: 38, alignment: .trailing)
-            Text(window.resetsAt.map(Self.reset) ?? "")
-                .foregroundStyle(.secondary)
+                .fontWeight(.medium)
+                .foregroundStyle(shown == nil ? Color.secondary : tone)
+                .frame(width: remaining ? 64 : 38, alignment: .trailing)
+            Text(resetText)
+                .foregroundStyle(window.resetsAt == nil ? .tertiary : .secondary)
                 .frame(width: 70, alignment: .trailing)
         }
         .font(.caption)
     }
 
-    /// "2h 13m" within a day, "Fri 03:59" further out.
+    /// A quota nobody has touched yet has no reset; say so instead of leaving a gap.
+    private var resetText: String {
+        if let reset = window.resetsAt { return Self.reset(reset) }
+        return window.usedFraction == 0 ? "unused" : ""
+    }
+
+    /// "2h 13m" within a day, "Fri 15:59" further out.
     static func reset(_ date: Date) -> String {
         let seconds = date.timeIntervalSinceNow
         guard seconds > 0 else { return "now" }
@@ -283,12 +309,20 @@ private struct LimitRow: View {
             let minutes = Int(seconds) % 3600 / 60
             return hours > 0 ? "\(hours)h \(minutes)m" : "\(minutes)m"
         }
-        return date.formatted(.dateTime.weekday(.abbreviated).hour(.twoDigits(amPM: .omitted)).minute())
+        return weekdayTime.string(from: date)
     }
+
+    /// 24-hour on purpose: the column has no room for AM/PM, and 12-hour without it is ambiguous.
+    private static let weekdayTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE HH:mm"
+        return formatter
+    }()
 }
 
 private struct Bar: View {
     let fraction: Double
+    let color: Color
 
     var body: some View {
         GeometryReader { proxy in
@@ -298,14 +332,6 @@ private struct Bar: View {
             }
         }
         .frame(height: 5)
-    }
-
-    private var color: Color {
-        switch fraction {
-        case 0.9...: return .red
-        case 0.7...: return .orange
-        default: return .green
-        }
     }
 }
 

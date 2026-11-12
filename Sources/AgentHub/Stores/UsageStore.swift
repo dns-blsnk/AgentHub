@@ -40,9 +40,12 @@ final class UsageStore {
                 ]),
             AgentUsage(
                 id: .codex, name: "Codex", plan: "API key",
-                note: "Signed in with an API key: billed per token, no plan limits. Sign in with ChatGPT to see them."),
+                tokensToday: TokenUsage(
+                    input: 31_026_255, cachedInput: 30_120_029, output: 210_096,
+                    hourly: [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 2, 4, 8, 5, 2, 6, 9, 3, 0, 0, 0, 0, 0].map { $0 * 1_000_000 }),
+                note: "API key: billed per token, no plan limits."),
             AgentUsage(
-                id: .antigravity, name: "Antigravity", plan: "free-tier", account: "me@example.com",
+                id: .antigravity, name: "Antigravity", plan: "free-tier", account: "me@example.com", reportsRemaining: true,
                 windows: [
                     UsageWindow(
                         id: "c", label: "Claude Sonnet 4.6 (Thinking)", usedFraction: 0, resetsAt: now.addingTimeInterval(7 * 86_400)),
