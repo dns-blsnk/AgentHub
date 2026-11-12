@@ -152,6 +152,57 @@ final class SyncTests: XCTestCase {
         XCTAssertFalse(sessions.isEmpty)
     }
 
+    func testOnlyTouchesTheGivenAgents() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let runner = CommandRunner(home: home, searchPath: [])
+        try FileManager.default.createDirectory(at: home.appendingPathComponent(".cursor"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: home.appendingPathComponent(".gemini"), withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: home.appendingPathComponent(".cursor/mcp.json"))
+        try Data("{}".utf8).write(to: home.appendingPathComponent(".gemini/settings.json"))
+        let sync = MCPSync(
+            adapters: [CursorAdapter(runner: runner), GeminiAdapter(runner: runner)],
+            snapshots: SnapshotStore(root: home.appendingPathComponent("snapshots")))
+
+        // Gemini is wanted but out of scope: only Cursor is written.
+        let server = MCPServer(name: "x", transport: .stdio, command: "x", agents: [.cursor, .gemini])
+        let result = sync.apply(server, values: [:], only: [.cursor])
+        XCTAssertEqual(result.appliedAgents, [.cursor])
+        XCTAssertEqual(try CursorAdapter(runner: runner).serverNames(), ["x"])
+        XCTAssertEqual(try GeminiAdapter(runner: runner).serverNames(), [])
+    }
+}
+
+final class ServerKeyStoreTests: XCTestCase {
+    func testAllServersShareOneItemAndOldItemsMoveOver() throws {
+        let keychain = KeychainStore(service: "dev.agenthub.tests.\(UUID().uuidString)")
+        let store = ServerKeyStore(keychain: keychain)
+        let a = MCPServer(name: "a", transport: .stdio, command: "x", keys: ["TOKEN"])
+        let b = MCPServer(name: "b", transport: .stdio, command: "x", keys: ["K1", "K2"])
+        defer {
+            for account in [ServerKeyStore.account, a.id.uuidString, b.id.uuidString] { keychain.delete(account) }
+        }
+        // As older versions stored them: one item per server, v0.1 as a bare token.
+        try keychain.set("raw", account: a.id.uuidString)
+        try keychain.set(#"{"K1":"1","K2":"2"}"#, account: b.id.uuidString)
+
+        let loaded = try store.loadAll(for: [a, b])
+        XCTAssertEqual(loaded[a.id], ["TOKEN": "raw"])
+        XCTAssertEqual(loaded[b.id], ["K1": "1", "K2": "2"])
+        XCTAssertNil(try keychain.read(a.id.uuidString))
+        XCTAssertNil(try keychain.read(b.id.uuidString))
+        XCTAssertNotNil(try keychain.read(ServerKeyStore.account))
+
+        var changed = loaded
+        changed[a.id] = ServerKeyStore.ownValues(["TOKEN": "new", "STRAY": "x"], for: a)
+        changed[b.id] = nil
+        try store.saveAll(changed)
+        XCTAssertEqual(try store.loadAll(for: [a, b]), [a.id: ["TOKEN": "new"]])
+
+        try store.saveAll([:])
+        XCTAssertNil(try keychain.read(ServerKeyStore.account))
+    }
+
 }
 
 final class CommandLineParserTests: XCTestCase {

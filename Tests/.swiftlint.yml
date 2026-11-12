@@ -2,3 +2,8 @@
 disabled_rules:
   - force_cast
   - line_length
+
+# All tests live in one file, grouped by area.
+file_length:
+  warning: 1200
+  error: 2000

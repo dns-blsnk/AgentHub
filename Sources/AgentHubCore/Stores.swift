@@ -37,12 +37,20 @@ public struct KeychainStore: Sendable {
     public init(service: String) { self.service = service }
 
     public func get(_ account: String) -> String? {
+        try? read(account)
+    }
+
+    /// Like `get`, but tells a missing item (nil) apart from a refused or failed read (throws), so a caller
+    /// never mistakes "access denied" for "nothing stored" and overwrites the item.
+    public func read(_ account: String) throws -> String? {
         var query = baseQuery(account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound { return nil }
+        try check(status)
+        return (item as? Data).flatMap { String(data: $0, encoding: .utf8) }
     }
 
     public func set(_ value: String, account: String) throws {
@@ -73,29 +81,52 @@ public struct KeychainStore: Sendable {
     }
 }
 
-/// Key values of MCP servers: one Keychain item per server, holding a JSON object `{key: value}`.
+/// Key values of every MCP server in one Keychain item, a JSON object `{server id: {key: value}}`, so macOS asks
+/// for access once instead of once per server. Older versions kept one item per server; `loadAll` moves them over.
 public struct ServerKeyStore: Sendable {
     public let keychain: KeychainStore
+    static let account = "servers"
 
     public init(keychain: KeychainStore) { self.keychain = keychain }
 
-    public func values(for server: MCPServer) -> [String: String] {
-        Self.decode(keychain.get(server.id.uuidString), keys: server.keys)
+    /// Values of every server. Throws when the Keychain refuses, so nothing is saved over values that couldn't be read.
+    public func loadAll(for servers: [MCPServer]) throws -> [UUID: [String: String]] {
+        var all: [UUID: [String: String]] = [:]
+        if let stored = try keychain.read(Self.account),
+            let object = try? JSONSerialization.jsonObject(with: Data(stored.utf8)) as? [String: [String: String]]
+        {
+            for (id, values) in object {
+                if let uuid = UUID(uuidString: id) { all[uuid] = values }
+            }
+        }
+        var migrated: [MCPServer] = []
+        for server in servers where all[server.id] == nil && !server.keys.isEmpty {
+            let legacy = Self.decode(try keychain.read(server.id.uuidString), keys: server.keys)
+            if !legacy.isEmpty {
+                all[server.id] = legacy
+                migrated.append(server)
+            }
+        }
+        if !migrated.isEmpty {
+            try saveAll(all)
+            for server in migrated { keychain.delete(server.id.uuidString) }
+        }
+        return all
     }
 
-    /// Only the server's own keys are stored, so a removed key's value doesn't linger.
-    public func setValues(_ values: [String: String], for server: MCPServer) throws {
-        let own = values.filter { server.keys.contains($0.key) && !$0.value.isEmpty }
-        if own.isEmpty {
-            keychain.delete(server.id.uuidString)
+    public func saveAll(_ all: [UUID: [String: String]]) throws {
+        let object = Dictionary(uniqueKeysWithValues: all.filter { !$0.value.isEmpty }.map { ($0.key.uuidString, $0.value) })
+        if object.isEmpty {
+            keychain.delete(Self.account)
             return
         }
-        let data = try JSONSerialization.data(withJSONObject: own, options: .sortedKeys)
-        try keychain.set(String(decoding: data, as: UTF8.self), account: server.id.uuidString)
+        let data = try JSONSerialization.data(withJSONObject: object, options: .sortedKeys)
+        try keychain.set(String(decoding: data, as: UTF8.self), account: Self.account)
     }
 
-    public func delete(_ server: MCPServer) {
-        keychain.delete(server.id.uuidString)
+    /// Only the server's own keys are kept, so a removed key's value doesn't linger.
+    public static func ownValues(_ values: [String: String], for server: MCPServer) -> [String: String] {
+        values.filter { server.keys.contains($0.key) && !$0.value.isEmpty }
     }
 
     /// v0.1 stored the bare token of the server's single key.

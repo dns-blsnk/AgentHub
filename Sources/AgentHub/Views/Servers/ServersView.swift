@@ -153,10 +153,13 @@ private struct ServerTable: View {
                 Text("Server")
                     .frame(maxWidth: .infinity, alignment: .leading)
                 ForEach(store.agents) { agent in
-                    Text(agent.name)
-                        .lineLimit(1)
-                        .frame(width: agentColumnWidth)
-                        .foregroundStyle(agent.installed ? .secondary : .tertiary)
+                    VStack(spacing: 5) {
+                        Text(agent.name)
+                            .lineLimit(1)
+                            .foregroundStyle(agent.installed ? .secondary : .tertiary)
+                        ColumnToggle(agent: agent)
+                    }
+                    .frame(width: agentColumnWidth)
                 }
                 Color.clear.frame(width: 28, height: 1)
             }
@@ -176,6 +179,34 @@ private struct ServerTable: View {
             }
         }
         .disabled(store.busy)
+    }
+}
+
+/// One checkbox per agent column: ticked when every server it can run is on, a dash when some are.
+/// Clicking turns the agent on for all of them, or off for all when they're all on.
+private struct ColumnToggle: View {
+    @Environment(ServerStore.self) private var store
+    let agent: AgentStatus
+
+    private enum State { case none, some, all }
+
+    var body: some View {
+        let eligible = store.servers.filter { agent.supports($0.transport) || $0.agents.contains(agent.id) }
+        let on = eligible.filter { $0.agents.contains(agent.id) }.count
+        let state: State = on == 0 ? .none : on == eligible.count ? .all : .some
+        Button {
+            Task { await store.setAgentForAllServers(agent.id, enabled: state != .all) }
+        } label: {
+            Image(systemName: state == .all ? "checkmark.square.fill" : state == .some ? "minus.square.fill" : "square")
+                .font(.system(size: 14))
+                .foregroundStyle(state == .none ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+        }
+        .buttonStyle(.plain)
+        .disabled(!agent.installed || eligible.isEmpty)
+        .help(
+            !agent.installed
+                ? "\(agent.name) is not installed"
+                : state == .all ? "Turn every server off in \(agent.name)" : "Turn every server on in \(agent.name)")
     }
 }
 

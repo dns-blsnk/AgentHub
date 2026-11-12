@@ -17,8 +17,9 @@ public struct MCPSync: Sendable {
     }
 
     /// Writes `server` to the agents in `server.agents` and removes it from agents AgentHub wrote it to before.
-    /// `previousName` handles renames. The returned `appliedAgents` reflects what actually succeeded.
-    public func apply(_ server: MCPServer, values: [String: String], previousName: String? = nil) -> (
+    /// `previousName` handles renames. `only` limits the work to those agents (a single checkbox), leaving the
+    /// others untouched. The returned `appliedAgents` reflects what actually succeeded.
+    public func apply(_ server: MCPServer, values: [String: String], previousName: String? = nil, only: Set<AgentID>? = nil) -> (
         appliedAgents: Set<AgentID>, outcomes: [AgentID: SyncOutcome]
     ) {
         let session = snapshots.makeSession()
@@ -26,7 +27,7 @@ public struct MCPSync: Sendable {
         var applied = server.appliedAgents
         var outcomes: [AgentID: SyncOutcome] = [:]
 
-        for adapter in adapters where adapter.isInstalled() {
+        for adapter in adapters where adapter.isInstalled() && only?.contains(adapter.id) ?? true {
             let wanted = server.agents.contains(adapter.id)
             let wasApplied = server.appliedAgents.contains(adapter.id)
             let renamed = previousName != nil && previousName != server.name

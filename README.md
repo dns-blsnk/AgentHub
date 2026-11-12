@@ -127,7 +127,11 @@ Renaming a server removes the old name from each agent and adds the new one. Del
 
 ### Keys and secrets
 
-Key values never go into the registry file. They are kept in the macOS Keychain, one item per server (service `dev.agenthub.mcp`), and written only into the agents' configs, which need them in plain text.
+Key values never go into the registry file. They are kept in the macOS Keychain in a single item for all servers (service `dev.agenthub.mcp`, account `servers`), and written only into the agents' configs, which need them in plain text.
+
+- AgentHub reads that item once per launch, so macOS asks for access at most once, however many servers you switch. Turning servers off doesn't read it at all. Choose **Always Allow** to stop the prompt for good (until the next rebuild of an ad-hoc signed app).
+- Ticking one checkbox writes only to that agent. The other agents' configs aren't touched.
+- Older versions kept one item per server. They are moved into the single item on first use and deleted.
 
 - Values can't contain line breaks or NUL characters, so they can't inject extra config lines.
 - Agent config files get owner-only permissions (`0600`) after AgentHub writes secrets into them.
@@ -136,6 +140,11 @@ Key values never go into the registry file. They are kept in the macOS Keychain,
 ### Per-agent switches
 
 Each cell in the servers grid turns a server on or off for one agent. For example, add a Figma server and keep it only in Codex. Turning a cell off removes the server from that agent's config. Turning it on writes it back with the current keys.
+
+To change many at once:
+
+- **A whole agent**: the checkbox under the agent's name in the column header turns that agent on for every server it can run, or off for all of them. It shows a dash when only some are on. Servers the agent already has from elsewhere are skipped when turning on, since replacing those needs a confirmation each.
+- **A whole server**: **Enable for All Agents** / **Disable for All Agents** in the row's ⋯ menu or its right-click menu.
 
 An agent that is not installed is shown greyed out and skipped.
 
@@ -228,7 +237,7 @@ Keychain items:
 
 | Service | Contents |
 |---|---|
-| `dev.agenthub.mcp` | MCP key values, one JSON item per server |
+| `dev.agenthub.mcp` | MCP key values of all servers, one JSON item (account `servers`) |
 | `dev.agenthub.claude`, `dev.agenthub.codex`, `dev.agenthub.antigravity` | Saved sign-ins, one item per account |
 
 ## Security

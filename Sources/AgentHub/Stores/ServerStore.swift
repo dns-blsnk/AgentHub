@@ -17,6 +17,8 @@ final class ServerStore {
     private let registry = RegistryStore(url: AppPaths.registry)
     private let keyStore = ServerKeyStore(keychain: KeychainStore(service: "dev.agenthub.mcp"))
     private var sync: MCPSync?
+    /// Every server's key values, read from the Keychain once per launch: one access prompt, not one per action.
+    @ObservationIgnored private var keyCache: [UUID: [String: String]]?
     private var isPreview = false
 
     init() {
@@ -70,7 +72,7 @@ final class ServerStore {
     }
 
     func keyValues(for server: MCPServer) -> [String: String] {
-        isPreview ? [:] : keyStore.values(for: server)
+        isPreview ? [:] : (try? allKeyValues())?[server.id] ?? [:]
     }
 
     /// Saves a new or edited server with all its key values and pushes it to every agent it is enabled for.
@@ -78,7 +80,7 @@ final class ServerStore {
         guard !isPreview else { return }
         let previousName = servers.first(where: { $0.id == server.id })?.name
         do {
-            try keyStore.setValues(values, for: server)
+            try updateKeyValues { $0[server.id] = ServerKeyStore.ownValues(values, for: server) }
         } catch {
             message = "Keychain: \(error.localizedDescription)"
             return
@@ -96,7 +98,7 @@ final class ServerStore {
         if enabled { updated.agents.insert(agent) } else { updated.agents.remove(agent) }
         guard let index = servers.firstIndex(where: { $0.id == server.id }) else { return }
         servers[index] = updated
-        await push(updated, previousName: server.name)
+        await push(updated, previousName: server.name, only: [agent])
     }
 
     /// Turns the server on for every installed agent, or off everywhere.
@@ -105,7 +107,48 @@ final class ServerStore {
         updated.agents = enabled ? Set(installedAgents.filter { $0.supports(server.transport) }.map(\.id)) : []
         guard updated.agents != server.agents, let index = servers.firstIndex(where: { $0.id == server.id }) else { return }
         servers[index] = updated
-        await push(updated, previousName: server.name)
+        await push(updated, previousName: server.name, only: updated.agents.symmetricDifference(server.agents))
+    }
+
+    /// Turns one agent on or off for every server it can run, and re-reads the agents once at the end.
+    /// Turning on skips servers the agent already has from elsewhere: replacing those needs a confirmation each.
+    func setAgentForAllServers(_ agent: AgentID, enabled: Bool) async {
+        guard let status = agents.first(where: { $0.id == agent }), status.installed else { return }
+        // One Keychain read up front; a refusal stops here instead of asking again for every server.
+        if enabled && servers.contains(where: { !$0.keys.isEmpty }) {
+            do {
+                _ = try allKeyValues()
+            } catch {
+                message = "Keychain: \(error.localizedDescription)"
+                return
+            }
+        }
+        var skipped: [String] = []
+        var failed = 0
+        for id in servers.map(\.id) {
+            guard let server = servers.first(where: { $0.id == id }), server.agents.contains(agent) != enabled else { continue }
+            if enabled {
+                guard status.supports(server.transport) else { continue }
+                if status.serverNames.contains(server.name) && !server.appliedAgents.contains(agent) {
+                    skipped.append(server.name)
+                    continue
+                }
+            }
+            var updated = server
+            if enabled { updated.agents.insert(agent) } else { updated.agents.remove(agent) }
+            guard let index = servers.firstIndex(where: { $0.id == id }) else { continue }
+            servers[index] = updated
+            if await !push(updated, previousName: server.name, only: [agent], refresh: false) { failed += 1 }
+        }
+        await refreshAgents()
+        var notes: [String] = []
+        if failed > 0 { notes.append("\(failed) server(s) failed in \(status.name), hover the ⚠︎ for details.") }
+        if !skipped.isEmpty {
+            notes.append(
+                "Skipped \(skipped.joined(separator: ", ")): \(status.name) already has them from elsewhere; tick them one by one to replace."
+            )
+        }
+        message = notes.isEmpty ? nil : notes.joined(separator: " ")
     }
 
     /// Servers already in agent configs that the registry doesn't have yet. Reading only, nothing is written.
@@ -132,17 +175,18 @@ final class ServerStore {
     /// so nothing is written to them; AgentHub only starts managing the entries.
     func importServers(_ picks: [(candidate: ImportCandidate, variant: Int)]) async {
         guard !isPreview else { return }
-        var failed: [String] = []
+        var adopted: [(MCPServer, [String: String])] = []
         for pick in picks where !servers.contains(where: { $0.name == pick.candidate.name }) {
-            let (server, values) = pick.candidate.server(variant: pick.variant)
-            do {
-                try keyStore.setValues(values, for: server)
-                servers.append(server)
-            } catch {
-                failed.append("\(server.name): \(error.localizedDescription)")
-            }
+            adopted.append(pick.candidate.server(variant: pick.variant))
         }
-        if !failed.isEmpty { message = "Keychain: " + failed.joined(separator: "; ") }
+        do {
+            try updateKeyValues { all in
+                for (server, values) in adopted { all[server.id] = ServerKeyStore.ownValues(values, for: server) }
+            }
+            servers += adopted.map(\.0)
+        } catch {
+            message = "Keychain: \(error.localizedDescription)"
+        }
         persist()
         await refreshAgents()
     }
@@ -154,7 +198,11 @@ final class ServerStore {
         busy = false
         let failures = failuresByAgent(result.outcomes)
         if failures.isEmpty {
-            keyStore.delete(server)
+            do {
+                try updateKeyValues { $0[server.id] = nil }
+            } catch {
+                message = "\(server.name) was removed, but its key values stay in the Keychain: \(error.localizedDescription)"
+            }
             servers.removeAll { $0.id == server.id }
             errors[server.id] = nil
         } else if let index = servers.firstIndex(where: { $0.id == server.id }) {
@@ -175,14 +223,43 @@ final class ServerStore {
         return sync
     }
 
-    private func push(_ server: MCPServer, previousName: String?) async {
+    private func allKeyValues() throws -> [UUID: [String: String]] {
+        if let keyCache { return keyCache }
+        let loaded = try keyStore.loadAll(for: servers)
+        keyCache = loaded
+        return loaded
+    }
+
+    private func updateKeyValues(_ change: (inout [UUID: [String: String]]) -> Void) throws {
+        var all = try allKeyValues()
+        change(&all)
+        try keyStore.saveAll(all)
+        keyCache = all
+    }
+
+    /// Writes the server to the agents in `only` (all of them when nil). Key values are read only when an agent in
+    /// scope gets the server, so turning servers off never touches the Keychain. Returns whether every agent took it.
+    @discardableResult
+    private func push(_ server: MCPServer, previousName: String?, only: Set<AgentID>? = nil, refresh: Bool = true) async -> Bool {
         guard let sync = await readySync() else {
             persist()
-            return
+            return false
+        }
+        let writes = only.map { server.agents.intersection($0) } ?? server.agents
+        var values: [String: String] = [:]
+        if !writes.isEmpty && !server.keys.isEmpty {
+            do {
+                values = try allKeyValues()[server.id] ?? [:]
+            } catch {
+                // Nothing was written: put the checkboxes back to what the agents really have.
+                if let index = servers.firstIndex(where: { $0.id == server.id }) { servers[index].agents = server.appliedAgents }
+                message = "Keychain: \(error.localizedDescription)"
+                persist()
+                return false
+            }
         }
         busy = true
-        let values = keyStore.values(for: server)
-        let result = await Task.detached { sync.apply(server, values: values, previousName: previousName) }.value
+        let result = await Task.detached { sync.apply(server, values: values, previousName: previousName, only: only) }.value
         busy = false
         if let index = servers.firstIndex(where: { $0.id == server.id }) {
             servers[index].appliedAgents = result.appliedAgents
@@ -191,7 +268,8 @@ final class ServerStore {
         errors[server.id] = failures.isEmpty ? nil : failures
         message = failures.isEmpty ? nil : "\(server.name): \(failures.count) agent(s) failed, hover the ⚠︎ for details."
         persist()
-        await refreshAgents()
+        if refresh { await refreshAgents() }
+        return failures.isEmpty
     }
 
     private func failuresByAgent(_ outcomes: [AgentID: SyncOutcome]) -> [AgentID: String] {
