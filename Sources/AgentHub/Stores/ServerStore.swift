@@ -71,19 +71,27 @@ final class ServerStore {
         self.agents = statuses
     }
 
-    func keyValues(for server: MCPServer) -> [String: String] {
-        isPreview ? [:] : (try? allKeyValues())?[server.id] ?? [:]
+    /// nil when the Keychain refused, so the form can tell "no values" from "couldn't read them".
+    func keyValues(for server: MCPServer) -> [String: String]? {
+        if isPreview || server.keys.isEmpty { return [:] }
+        guard let all = try? allKeyValues() else { return nil }
+        return all[server.id] ?? [:]
     }
 
     /// Saves a new or edited server with all its key values and pushes it to every agent it is enabled for.
     func save(_ server: MCPServer, values: [String: String]) async {
         guard !isPreview else { return }
         let previousName = servers.first(where: { $0.id == server.id })?.name
-        do {
-            try updateKeyValues { $0[server.id] = ServerKeyStore.ownValues(values, for: server) }
-        } catch {
-            message = "Keychain: \(error.localizedDescription)"
-            return
+        let own = ServerKeyStore.ownValues(values, for: server)
+        let hadKeys = servers.first(where: { $0.id == server.id })?.keys.isEmpty == false
+        // A server without keys, before and after, has nothing in the Keychain: no prompt for it.
+        if !own.isEmpty || hadKeys {
+            do {
+                try updateKeyValues { $0[server.id] = own.isEmpty ? nil : own }
+            } catch {
+                message = "Keychain: \(error.localizedDescription)"
+                return
+            }
         }
         if let index = servers.firstIndex(where: { $0.id == server.id }) {
             servers[index] = server
@@ -175,17 +183,23 @@ final class ServerStore {
     /// so nothing is written to them; AgentHub only starts managing the entries.
     func importServers(_ picks: [(candidate: ImportCandidate, variant: Int)]) async {
         guard !isPreview else { return }
-        var adopted: [(MCPServer, [String: String])] = []
+        var adopted: [(server: MCPServer, values: [String: String])] = []
         for pick in picks where !servers.contains(where: { $0.name == pick.candidate.name }) {
-            adopted.append(pick.candidate.server(variant: pick.variant))
+            let (server, values) = pick.candidate.server(variant: pick.variant)
+            adopted.append((server, ServerKeyStore.ownValues(values, for: server)))
         }
-        do {
-            try updateKeyValues { all in
-                for (server, values) in adopted { all[server.id] = ServerKeyStore.ownValues(values, for: server) }
+        let withValues = adopted.filter { !$0.values.isEmpty }
+        // Servers without values never need the Keychain, so a refusal only holds back the ones with values.
+        servers += adopted.filter { $0.values.isEmpty }.map(\.server)
+        if !withValues.isEmpty {
+            do {
+                try updateKeyValues { all in
+                    for (server, values) in withValues { all[server.id] = values }
+                }
+                servers += withValues.map(\.server)
+            } catch {
+                message = "Keychain: \(error.localizedDescription). Not imported: \(withValues.map(\.server.name).joined(separator: ", "))."
             }
-            servers += adopted.map(\.0)
-        } catch {
-            message = "Keychain: \(error.localizedDescription)"
         }
         persist()
         await refreshAgents()
@@ -199,7 +213,7 @@ final class ServerStore {
         let failures = failuresByAgent(result.outcomes)
         if failures.isEmpty {
             do {
-                try updateKeyValues { $0[server.id] = nil }
+                if !server.keys.isEmpty { try updateKeyValues { $0[server.id] = nil } }
             } catch {
                 message = "\(server.name) was removed, but its key values stay in the Keychain: \(error.localizedDescription)"
             }
@@ -251,8 +265,11 @@ final class ServerStore {
             do {
                 values = try allKeyValues()[server.id] ?? [:]
             } catch {
-                // Nothing was written: put the checkboxes back to what the agents really have.
-                if let index = servers.firstIndex(where: { $0.id == server.id }) { servers[index].agents = server.appliedAgents }
+                // Nothing was written: put the checkboxes in scope back to what those agents really have.
+                if let index = servers.firstIndex(where: { $0.id == server.id }) {
+                    let scope = only ?? Set(AgentID.allCases)
+                    servers[index].agents = server.agents.subtracting(scope).union(server.appliedAgents.intersection(scope))
+                }
                 message = "Keychain: \(error.localizedDescription)"
                 persist()
                 return false
@@ -265,7 +282,10 @@ final class ServerStore {
             servers[index].appliedAgents = result.appliedAgents
         }
         let failures = failuresByAgent(result.outcomes)
-        errors[server.id] = failures.isEmpty ? nil : failures
+        // Agents outside `only` weren't tried, so their earlier errors still stand.
+        var serverErrors = only.map { scope in (errors[server.id] ?? [:]).filter { !scope.contains($0.key) } } ?? [:]
+        serverErrors.merge(failures) { _, new in new }
+        errors[server.id] = serverErrors.isEmpty ? nil : serverErrors
         message = failures.isEmpty ? nil : "\(server.name): \(failures.count) agent(s) failed, hover the ⚠︎ for details."
         persist()
         if refresh { await refreshAgents() }

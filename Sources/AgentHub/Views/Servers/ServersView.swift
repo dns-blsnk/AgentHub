@@ -191,7 +191,12 @@ private struct ColumnToggle: View {
     private enum State { case none, some, all }
 
     var body: some View {
-        let eligible = store.servers.filter { agent.supports($0.transport) || $0.agents.contains(agent.id) }
+        // Same rule as the bulk action: servers the agent has from elsewhere are left to their own checkbox.
+        let eligible = store.servers.filter { server in
+            server.agents.contains(agent.id)
+                || (agent.supports(server.transport)
+                    && !(agent.serverNames.contains(server.name) && !server.appliedAgents.contains(agent.id)))
+        }
         let on = eligible.filter { $0.agents.contains(agent.id) }.count
         let state: State = on == 0 ? .none : on == eligible.count ? .all : .some
         Button {

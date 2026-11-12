@@ -55,7 +55,7 @@ struct MenuBarContent: View {
                 ? "\(label) \(Int(((1 - used) * 100).rounded()))% left"
                 : "\(label) \(Int((used * 100).rounded()))%"
         }
-        if parts.isEmpty, let tokens = usage.tokensToday {
+        if parts.isEmpty, let tokens = usage.tokensToday, tokens.total > 0 {
             return "\(usage.name): today \(TokenUsage.compact(tokens.total)) tokens"
         }
         return parts.isEmpty ? nil : "\(usage.name): " + parts.joined(separator: " · ")

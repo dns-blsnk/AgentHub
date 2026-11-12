@@ -35,8 +35,9 @@ extension TokenUsage {
 
     /// 950, 12.4K, 31.2M
     static func compact(_ count: Int) -> String {
+        // Thresholds sit where rounding to one decimal flips the unit, so 999,960 reads "1.0M", not "1000.0K".
         switch count {
-        case 1_000_000...: return String(format: "%.1fM", Double(count) / 1_000_000)
+        case 999_950...: return String(format: "%.1fM", Double(count) / 1_000_000)
         case 1_000...: return String(format: "%.1fK", Double(count) / 1_000)
         default: return "\(count)"
         }

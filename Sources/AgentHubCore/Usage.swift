@@ -337,7 +337,8 @@ public struct UsageReader: Sendable {
                 else { continue }
                 let last = (info["last_token_usage"] as? [String: Any]).map(tokenUsage) ?? TokenUsage()
                 let spent: TokenUsage
-                if let previous, total.total >= previous.total {
+                // A running total that went down in any field was reset: count this reply on its own.
+                if let previous, total.input >= previous.input, total.output >= previous.output {
                     spent = TokenUsage(
                         input: total.input - previous.input, cachedInput: max(total.cachedInput - previous.cachedInput, 0),
                         output: total.output - previous.output)
@@ -399,15 +400,23 @@ public struct UsageReader: Sendable {
 
     /// ISO 8601 with or without fractional seconds (Anthropic sends microseconds, Google whole seconds).
     static func parseDate(_ string: String) -> Date? {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: string) { return date }
-        formatter.formatOptions = [.withInternetDateTime]
-        if let date = formatter.date(from: string) { return date }
+        if let date = fractionalFormatter.date(from: string) ?? wholeFormatter.date(from: string) { return date }
         // Fractions longer than milliseconds: drop them.
         if let dot = string.firstIndex(of: "."), let end = string[dot...].firstIndex(where: { $0 == "+" || $0 == "-" || $0 == "Z" }) {
-            return formatter.date(from: String(string[..<dot]) + String(string[end...]))
+            return wholeFormatter.date(from: String(string[..<dot]) + String(string[end...]))
         }
         return nil
     }
+
+    /// Shared: token counting parses a timestamp per line, and ISO8601DateFormatter is thread-safe.
+    nonisolated(unsafe) private static let fractionalFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    nonisolated(unsafe) private static let wholeFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
 }

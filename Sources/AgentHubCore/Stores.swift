@@ -92,9 +92,13 @@ public struct ServerKeyStore: Sendable {
     /// Values of every server. Throws when the Keychain refuses, so nothing is saved over values that couldn't be read.
     public func loadAll(for servers: [MCPServer]) throws -> [UUID: [String: String]] {
         var all: [UUID: [String: String]] = [:]
-        if let stored = try keychain.read(Self.account),
-            let object = try? JSONSerialization.jsonObject(with: Data(stored.utf8)) as? [String: [String: String]]
-        {
+        if let stored = try keychain.read(Self.account) {
+            // Unreadable means stop: saving over it would drop every server's values at once.
+            guard let object = try? JSONSerialization.jsonObject(with: Data(stored.utf8)) as? [String: [String: String]] else {
+                throw NSError(
+                    domain: "Keychain", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "The stored MCP key values are in an unknown format; nothing was changed."])
+            }
             for (id, values) in object {
                 if let uuid = UUID(uuidString: id) { all[uuid] = values }
             }

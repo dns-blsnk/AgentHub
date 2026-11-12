@@ -203,6 +203,13 @@ final class ServerKeyStoreTests: XCTestCase {
         XCTAssertNil(try keychain.read(ServerKeyStore.account))
     }
 
+    func testUnreadableItemIsNeverOverwritten() throws {
+        let keychain = KeychainStore(service: "dev.agenthub.tests.\(UUID().uuidString)")
+        defer { keychain.delete(ServerKeyStore.account) }
+        try keychain.set("not json", account: ServerKeyStore.account)
+        XCTAssertThrowsError(try ServerKeyStore(keychain: keychain).loadAll(for: []))
+        XCTAssertEqual(try keychain.read(ServerKeyStore.account), "not json")
+    }
 }
 
 final class CommandLineParserTests: XCTestCase {
@@ -540,6 +547,21 @@ final class UsageTests: XCTestCase {
         XCTAssertEqual(tokens.freshInput, 300)
         XCTAssertEqual(tokens.hourly.count, 24)
         XCTAssertEqual(tokens.hourly.reduce(0, +), 1060)
+    }
+
+    func testCodexTokensNeverGoNegativeWhenOneCounterResets() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let lines = [
+            #"{"timestamp":"2026-03-05T09:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":0,"output_tokens":10},"last_token_usage":{"input_tokens":1000,"cached_input_tokens":0,"output_tokens":10}}}}"#,
+            // Input went down while output went up: the total still grew, but the counters were reset.
+            #"{"timestamp":"2026-03-05T09:01:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":400,"cached_input_tokens":0,"output_tokens":700},"last_token_usage":{"input_tokens":400,"cached_input_tokens":0,"output_tokens":5}}}}"#,
+        ]
+        try lines.joined(separator: "\n").write(to: root.appendingPathComponent("a.jsonl"), atomically: true, encoding: .utf8)
+        let tokens = UsageReader.codexTokens(in: root, since: try XCTUnwrap(UsageReader.parseDate("2026-03-05T00:00:00Z")))
+        XCTAssertEqual([tokens.input, tokens.output], [1400, 15])
+        XCTAssertTrue(tokens.hourly.allSatisfy { $0 >= 0 })
     }
 
     func testCodexRateLimitsFromSessions() throws {

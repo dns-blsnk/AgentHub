@@ -14,6 +14,12 @@ let package = Package(
             dependencies: ["AgentHubCore"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // Logic of the app target that needs no agents, Keychain or windows: alerts, summaries, formatting.
+        .testTarget(
+            name: "AgentHubTests",
+            dependencies: ["AgentHub"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         .testTarget(
             name: "AgentHubCoreTests",
             dependencies: ["AgentHubCore"],

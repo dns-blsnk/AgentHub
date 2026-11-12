@@ -15,6 +15,8 @@ struct ServerForm: View {
     @State private var keyRows: [KeyRow] = []
     @State private var agents: Set<AgentID> = []
     @State private var saving = false
+    /// The Keychain refused: the fields would look empty, and saving would wipe the stored values.
+    @State private var keysUnreadable = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -103,13 +105,16 @@ struct ServerForm: View {
                 if saving {
                     ProgressView().controlSize(.small)
                     Text("Applying…").foregroundStyle(.secondary)
+                } else if keysUnreadable {
+                    Label("Couldn't read the key values from the Keychain. Close and open again to retry.", systemImage: "lock")
+                        .foregroundStyle(.orange)
                 }
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button(original == nil ? "Add" : "Save") { save() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(!isValid || saving)
+                    .disabled(!isValid || saving || keysUnreadable)
             }
             .padding(14)
         }
@@ -157,7 +162,9 @@ struct ServerForm: View {
         transport = original.transport
         commandLine = CommandLineParser.join([original.command] + original.args)
         url = original.url
-        let values = store.keyValues(for: original)
+        let stored = store.keyValues(for: original)
+        keysUnreadable = stored == nil
+        let values = stored ?? [:]
         keyRows = original.keys.map { KeyRow(name: $0, value: values[$0] ?? "") }
         if keyRows.isEmpty { keyRows = [KeyRow()] }
         agents = original.agents

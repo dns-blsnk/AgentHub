@@ -285,7 +285,8 @@ Sources/
     Notch/                 NotchStore, NotchController (panels, hover), NotchPanelView
     Views/                 MainView, Servers/, Usage/, Accounts/
 Tests/
-  AgentHubCoreTests/
+  AgentHubCoreTests/     Core logic
+  AgentHubTests/         app logic without UI (alerts, summaries, formatting)
 ```
 
 The app follows **MV (Model–View with Stores)**:
@@ -324,7 +325,10 @@ Run `./scripts/format.sh` before committing, and `./scripts/lint.sh` to check.
 
 `scripts/dev.sh` watches `Sources/` and `Package.swift`. A failed build keeps the previous app running and prints the errors.
 
-Tests cover TOML editing, CLI argument building, JSON configs, sync, multiple keys, import and merging, project scope, usage parsing, value validation, session state and account switching. They use temporary directories and a fake command runner, so they never touch your real configs or Keychain.
+Two test targets, both run by `swift test`:
+
+- **AgentHubCoreTests** cover TOML editing, CLI argument building, JSON configs, sync (including writing to only the agents that changed), multiple keys, import and merging, project scope, usage and token parsing, value validation, the shared Keychain item and its migration, session state and account switching. They use temporary directories, a fake command runner and throwaway Keychain services, so they never touch your real configs or secrets.
+- **AgentHubTests** cover app logic that needs no agents or windows: notch alerts and their queue, menu bar summaries, token and quota formatting.
 
 ## Troubleshooting
 
